@@ -1,0 +1,7 @@
+src-tauri/target/
+src-tauri/gen/
+tools/dev_config.json
+__pycache__/
+
+rustboard.key
+rustboard.key.pub

@@ -1,0 +1,26 @@
+[package]
+name = "rustboard"
+version = "1.0.0"
+description = "Soundboard + counters with global hotkeys"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# global keyboard hook (works when window is not focused)
+rdev = "0.5"
+# audio: rodio 0.19 re-exports cpal 0.15, used for device list + mic passthrough
+rodio = { version = "0.19", default-features = false, features = ["symphonia-all"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

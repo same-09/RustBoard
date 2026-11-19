@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rustboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">Rustboard</div>
+
+    <div class="preset-box">
+      <select id="preset-select" aria-label="Preset"></select>
+      <button class="icon-btn" id="preset-add" title="Add preset"></button>
+      <button class="icon-btn" id="preset-clone" title="Clone preset"></button>
+      <button class="icon-btn" id="preset-edit" title="Edit preset"></button>
+      <button class="icon-btn danger" id="preset-del" title="Delete preset"></button>
+    </div>
+
+    <div class="seg" id="enable-seg" role="group" aria-label="Enable">
+      <button data-v="Both">Both</button>
+      <button data-v="Counters">Counters</button>
+      <button data-v="Sounds">Sounds</button>
+    </div>
+
+    <button class="live-btn" id="go-live" title="Send your sounds and your mic to Discord through the virtual cable (VB-CABLE)">Go Live</button>
+    <button class="icon-btn" id="open-settings" title="Settings"></button>
+  </header>
+
+  <div id="update-bar" hidden>
+    <span id="update-text"></span>
+    <button class="primary" id="update-btn">Update now</button>
+    <button id="update-later">Later</button>
+  </div>
+
+  <main class="split">
+    <section class="panel" id="counters-panel">
+      <div class="panel-head">
+        <h2>Counters <span class="off-tag">disabled</span></h2>
+        <div class="tools">
+          <button class="icon-btn" id="counter-add" title="Add counter"></button>
+        </div>
+      </div>
+      <div class="list" id="counter-list"></div>
+    </section>
+
+    <section class="panel" id="sounds-panel">
+      <div class="panel-head">
+        <h2>Sounds <span class="off-tag">disabled</span></h2>
+        <div class="tools vol">
+          <button class="icon-btn" id="mute" title="Mute"></button>
+          <input type="range" id="master" min="0" max="100" aria-label="Master volume">
+        </div>
+      </div>
+      <div class="toolbar">
+        <button class="icon-btn" id="sound-add" title="Add sound"></button>
+        <span class="grow"></span>
+        <button class="icon-btn" id="sound-stop" title="Stop"></button>
+        <button class="icon-btn" id="sound-pause" title="Pause"></button>
+        <button class="icon-btn" id="sound-play" title="Play selected"></button>
+      </div>
+      <div class="list" id="sound-list"></div>
+    </section>
+  </main>
+
+  <dialog id="dlg">
+    <div class="modal-head"><h3 id="dlg-title"></h3></div>
+    <div class="modal-body" id="dlg-body"></div>
+    <div class="modal-foot" id="dlg-foot"></div>
+  </dialog>
+
+  <dialog id="bind">
+    <div class="modal-body bind-body">
+      <p class="bind-title">Press the keys, then release them</p>
+      <p class="muted">Hold a combination like Ctrl + F5. It is saved when you let go.</p>
+      <div class="keys" id="bind-live"></div>
+    </div>
+    <div class="modal-foot"><button id="bind-cancel">Cancel</button></div>
+  </dialog>
+
+  <div id="toast" role="status"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
