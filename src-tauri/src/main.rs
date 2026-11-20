@@ -11,7 +11,7 @@ mod logic;
 mod state;
 mod updater;
 
-use audio::{AudioCmd, AudioSettings, Devices, Levels, LevelsOut, LiveStatus};
+use audio::{AudioCmd, AudioSettings, Devices, Levels, LevelsOut, LiveStatus, SoundLevelOut};
 use config::Config;
 use state::AppState;
 use std::path::Path;
@@ -133,6 +133,14 @@ fn get_levels(state: State<'_, AppState>) -> LevelsOut {
     state.levels.take()
 }
 
+/// What the soundboard plays right now, as 5 frequency bands (bass .. treble) + the file of the
+/// sound that was started last. The UI asks about 30 times a second and moves the white bars
+/// on the tile of that sound.
+#[tauri::command]
+fn get_sound_level(state: State<'_, AppState>) -> SoundLevelOut {
+    state.levels.take_sound()
+}
+
 /// A sound picture as a data URL (png, jpg, webp, gif, bmp; 8 MB at most).
 #[tauri::command(async)]
 fn image_data(path: String) -> Result<String, String> {
@@ -219,6 +227,7 @@ fn main() {
             list_devices,
             set_live,
             get_levels,
+            get_sound_level,
             image_data,
             app_version,
             open_url,

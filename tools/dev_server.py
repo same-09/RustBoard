@@ -124,7 +124,27 @@ def play_sound(args):
     except (IndexError, KeyError):
         raise ValueError("sound not found")
     print(f"[mock] play: {sound['name']} ({len(sound['files'])} file(s), loop={sound['loop']})")
+    if sound["files"]:
+        PLAYING["file"] = sound["files"][0]
+        PLAYING["until"] = time.time() + (3600 if sound.get("loop") else 4)
     return None
+
+
+PLAYING = {"file": "", "until": 0.0}
+
+
+def get_sound_level(_args):
+    """Fake music: five bands that bounce while the last played sound 'plays'."""
+    t = time.time()
+    on = t < PLAYING["until"]
+    bands = [0.0] * 5
+    if on:
+        beat = max(0.0, math.sin(t * 7.0)) ** 3
+        for i in range(5):
+            wobble = 0.5 + 0.5 * math.sin(t * (5 + 3 * i) + i * 1.7)
+            base = (0.28 if i == 0 else 0.12 / (1 + i * 0.4)) * (0.35 + 0.65 * (beat if i < 2 else wobble))
+            bands[i] = base
+    return {"file": PLAYING["file"], "bands": bands}
 
 
 def make_noop(label):
@@ -179,6 +199,7 @@ def image_data(args):
 COMMANDS = {
     "image_data": image_data,
     "get_levels": get_levels,
+    "get_sound_level": get_sound_level,
     "get_state": get_state,
     "set_config": set_config,
     "select_preset": select_preset,

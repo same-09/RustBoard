@@ -148,6 +148,7 @@ async function playSound(i) {
   try {
     await sync();
     await call('play_sound', { preset: cfg.selected_preset, sound: i });
+    wave.lastPoll = 0; // look at the level right away, no wait
   } catch (e) {
     toast(e, true);
   }
@@ -182,16 +183,132 @@ function loadImage(path) {
 
 const IMAGE_FILTER = [{ name: 'Picture', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }];
 
-function soundCover(name, onPlay, image = '') {
+/* ---------- dancing bars on the tile cover ---------- */
+// Rust splits what the soundboard plays into 5 bands (bass .. treble) and `get_sound_level`
+// gives the loudest level of each since the last call. Each white bar follows one band.
+// Still icon = rest heights. Bars jump up fast, fall back slowly, then settle into the icon.
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const WAVE_X = [4, 8, 12, 16, 20];
+const WAVE_REST = [2, 6, 9, 4, 1];          // half heights of the still icon
+const WAVE_TILT_DB = [0, 3, 6, 9, 12];      // treble has less energy: lift it a little
+const WAVE_FLOOR_DB = -56;                  // this level = bar at its smallest
+const WAVE_RANGE_DB = 46;                   // ...and this much louder = bar at full height
+const WAVE_MIN = 0.6;                       // half height of a silent bar while the sound plays
+const WAVE_MAX = 10.5;                      // half height of a full bar (viewBox is 24 high)
+const WAVE_HOLD_MS = 250;                   // short silence does not drop the bars to rest yet
+
+const wave = {
+  tiles: [],            // { svg, files, live } for the tiles on screen
+  target: [0, 0, 0, 0, 0],
+  level: [0, 0, 0, 0, 0],
+  act: 0,               // 0 = still icon, 1 = dancing
+  file: '',
+  busy: false,
+  lastPoll: 0,
+  lastLoud: -1e9,
+  started: false,
+};
+
+function setWaveBars(svg, halves) {
+  svg._bars.forEach((l, i) => {
+    l.setAttribute('y1', (12 - halves[i]).toFixed(2));
+    l.setAttribute('y2', (12 + halves[i]).toFixed(2));
+  });
+}
+
+function waveIcon() {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add('wave');
+  svg._bars = WAVE_X.map((x) => {
+    const l = document.createElementNS(SVG_NS, 'line');
+    l.setAttribute('x1', x);
+    l.setAttribute('x2', x);
+    svg.append(l);
+    return l;
+  });
+  setWaveBars(svg, WAVE_REST);
+  return svg;
+}
+
+function pollWave(now) {
+  wave.busy = true;
+  wave.lastPoll = now;
+  call('get_sound_level').then((l) => {
+    wave.file = l.file || '';
+    let loud = false;
+    l.bands.forEach((v, i) => {
+      const db = v > 1e-5 ? 20 * Math.log10(v) : -100;
+      const t = Math.max(0, Math.min(1, (db + WAVE_TILT_DB[i] - WAVE_FLOOR_DB) / WAVE_RANGE_DB));
+      wave.target[i] = t;
+      if (v > 1e-4) loud = true;
+    });
+    if (loud) wave.lastLoud = performance.now();
+  }).catch(() => {
+    wave.target.fill(0);
+  }).finally(() => {
+    wave.busy = false;
+  });
+}
+
+function waveFrame(now) {
+  requestAnimationFrame(waveFrame);
+  if (document.hidden || view !== 'home') return;
+
+  const dancing = now - wave.lastLoud < WAVE_HOLD_MS;
+  // while a sound plays: ask about 30 times a second; idle: 10 times a second is enough
+  if (!wave.busy && now - wave.lastPoll >= (dancing || wave.act > 0.01 ? 33 : 100)) pollWave(now);
+
+  for (let i = 0; i < wave.level.length; i++) {
+    const t = wave.target[i];
+    wave.level[i] += (t - wave.level[i]) * (t > wave.level[i] ? 0.6 : 0.14);
+  }
+  wave.act += ((dancing ? 1 : 0) - wave.act) * (dancing ? 0.4 : 0.1);
+  if (!dancing && wave.act < 0.01) wave.act = 0;
+
+  const peak = Math.max(...wave.level);
+  for (const tile of wave.tiles) {
+    const mine = wave.act > 0 && wave.file && tile.files.includes(wave.file);
+    if (!mine) {
+      if (tile.live) { // back to the still icon
+        setWaveBars(tile.svg, WAVE_REST);
+        tile.cover.classList.remove('live');
+        tile.cover.style.removeProperty('--lvl');
+        tile.live = false;
+      }
+      continue;
+    }
+    const halves = WAVE_REST.map((rest, i) => {
+      const dance = WAVE_MIN + wave.level[i] * (WAVE_MAX - WAVE_MIN);
+      return rest + (dance - rest) * wave.act;
+    });
+    setWaveBars(tile.svg, halves);
+    tile.cover.classList.add('live');
+    tile.cover.style.setProperty('--lvl', (peak * wave.act).toFixed(3));
+    tile.live = true;
+  }
+}
+
+function startWave() {
+  if (wave.started) return;
+  wave.started = true;
+  requestAnimationFrame(waveFrame);
+}
+
+function soundCover(name, onPlay, image = '', files = []) {
   const t = document.createElement('span');
   t.innerHTML = SOLID_PLAY;
   const go = h('span', { class: 'go' }, t.firstChild);
+  const svg = waveIcon();
   const cover = h('div', {
     class: 'cover',
     style: `--h:${hueOf(name)}`,
     title: 'Play',
     onclick: (e) => { e.stopPropagation(); onPlay(); },
-  }, icon('bars'));
+  }, svg);
+  wave.tiles.push({ svg, cover, files, live: false });
   if (image) {
     loadImage(image).then((url) => {
       if (!url) return; // missing file: keep the generated cover
@@ -208,6 +325,7 @@ function renderSounds() {
   const list = $('#sound-list');
   $('#sound-count').textContent = p.sounds.length || '';
   list.replaceChildren();
+  wave.tiles = []; // the covers are drawn again below
   setAmbient(p.sounds[p.selected_sound]);
   if (!p.sounds.length) {
     list.append(emptyState('No sounds yet', 'Add a sound file and give it a key. Press the key anywhere and it plays.', 'Add sound', () => $('#sound-add').click()));
@@ -230,7 +348,7 @@ function renderSounds() {
         ondblclick: () => playSound(i),
       },
         h('div', { class: 'art' },
-          soundCover(s.name || s.files[0] || 'sound', () => { select(i); playSound(i); }, s.image),
+          soundCover(s.name || s.files[0] || 'sound', () => { select(i); playSound(i); }, s.image, s.files),
           h('div', { class: 'acts' },
             iconBtn('edit', 'Edit', () => openSoundDialog(clone(s), (d) => { p.sounds[i] = d; commit(); renderSounds(); })),
             iconBtn('trash', 'Remove', () => {
@@ -1145,6 +1263,7 @@ async function init() {
   render();
   renderLive();
   showView('home');
+  startWave();
   refreshDevices().catch(() => {}); // warm the device list so Settings opens fast
 
   // hotkeys change the selection in Rust, then tell us

@@ -767,6 +767,21 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.15); backdrop-filter: blur(2px); 
 .sound .art .cover { width: var(--tile); height: var(--tile); border-radius: 10px; }
 .sound .art .cover > svg { width: 28px; height: 28px; }
 .sound .art .cover.has-pic > svg { display: none; }
+
+/* dancing bars (see waveIcon in main.js): the bars are <line>s, the JS sets their height */
+.cover > svg.wave { position: relative; z-index: 1; overflow: visible; }
+.cover::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, hsl(var(--h) 90% 62% / calc(var(--lvl, 0) * 0.6)), transparent 72%);
+  pointer-events: none;
+}
+.cover.has-pic::before { display: none; }
+.cover.live > svg.wave {
+  color: #fff;
+  filter: drop-shadow(0 0 calc(var(--lvl, 0) * 7px) rgba(255, 255, 255, 0.85));
+}
 .cover .pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .cover .go { z-index: 1; }
 .cover .go svg { width: 22px; height: 22px; }

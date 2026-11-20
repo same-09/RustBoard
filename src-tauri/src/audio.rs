@@ -102,6 +102,23 @@ pub struct Levels {
     output: AtomicU32,
     active: AtomicBool,
     gate_open: AtomicBool,
+    /// what the soundboard itself plays: loudest RMS per frequency band since the last read
+    bands: [AtomicU32; BANDS],
+    /// file of the sound that was started last (the UI matches it to a tile)
+    sound_file: Mutex<String>,
+}
+
+/// Frequency bands the tiles dance to: bass, low mid, mid, high mid, treble.
+pub const BANDS: usize = 5;
+/// Band edges (Hz) for the one-pole splitters in `Tap`.
+const BAND_EDGES: [f32; BANDS - 1] = [120.0, 400.0, 1200.0, 3600.0];
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SoundLevelOut {
+    /// file of the sound that was started last
+    pub file: String,
+    /// linear RMS per band (bass .. treble), loudest since the last call; 0 = silence
+    pub bands: [f32; BANDS],
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -132,6 +149,32 @@ impl Levels {
             self.output.fetch_max(output.to_bits(), Ordering::Relaxed);
         }
         self.gate_open.store(gate_open, Ordering::Relaxed);
+    }
+
+    fn note_bands(&self, b: &[f32; BANDS]) {
+        for (slot, v) in self.bands.iter().zip(b.iter()) {
+            if v.is_finite() && *v > 0.0 {
+                slot.fetch_max(v.to_bits(), Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn set_sound_file(&self, file: &str) {
+        if let Ok(mut f) = self.sound_file.lock() {
+            if f.as_str() != file {
+                *f = file.to_string();
+            }
+        }
+    }
+
+    /// Loudest band levels of the soundboard output since the last call, then start over.
+    pub fn take_sound(&self) -> SoundLevelOut {
+        let mut bands = [0.0f32; BANDS];
+        for (out, slot) in bands.iter_mut().zip(self.bands.iter()) {
+            *out = f32::from_bits(slot.swap(0, Ordering::Relaxed));
+        }
+        let file = self.sound_file.lock().map(|f| f.clone()).unwrap_or_default();
+        SoundLevelOut { file, bands }
     }
 
     /// Peak (of block RMS) since the last call, then start over.
@@ -223,10 +266,12 @@ struct Output {
     gain: f32,
     /// extra fixed attenuation (1.0 = none), used while live so sounds + mic fit on the cable
     headroom: f32,
+    /// the sounds report their band levels here (for the dancing tiles)
+    levels: Arc<Levels>,
 }
 
 impl Output {
-    fn open(name: &str, fall_back_to_default: bool) -> Result<Output, String> {
+    fn open(name: &str, fall_back_to_default: bool, levels: Arc<Levels>) -> Result<Output, String> {
         let host = cpal::default_host();
         let mut device = find_output(&host, name);
         if device.is_none() && fall_back_to_default {
@@ -242,6 +287,7 @@ impl Output {
             sinks: Vec::new(),
             gain: 1.0,
             headroom: 1.0,
+            levels,
         })
     }
 
@@ -274,16 +320,19 @@ impl Output {
         let source = Decoder::new(BufReader::new(f)).map_err(|e| format!("Cannot decode '{}': {}", file, e))?;
         let sink = Sink::try_new(&self.handle).map_err(|e| e.to_string())?;
         sink.set_volume(self.level(volume));
+        // every source goes through a `Tap`, which only measures: the sound is not changed
+        let lv = &self.levels;
         if fx == 0 {
             if looped {
-                sink.append(source.buffered().repeat_infinite());
+                sink.append(Tap::new(source.buffered().repeat_infinite().convert_samples::<f32>(), Arc::clone(lv)));
             } else {
-                sink.append(source);
+                sink.append(Tap::new(source.convert_samples::<f32>(), Arc::clone(lv)));
             }
         } else if looped {
-            sink.append(FxSource::new(source.buffered().repeat_infinite().convert_samples::<f32>(), fx));
+            let fxs = FxSource::new(source.buffered().repeat_infinite().convert_samples::<f32>(), fx);
+            sink.append(Tap::new(fxs, Arc::clone(lv)));
         } else {
-            sink.append(FxSource::new(source.convert_samples::<f32>(), fx));
+            sink.append(Tap::new(FxSource::new(source.convert_samples::<f32>(), fx), Arc::clone(lv)));
         }
         self.sinks.push((sink, volume));
         Ok(())
@@ -346,6 +395,117 @@ impl<S: Source<Item = f32>> Source for FxSource<S> {
 
     fn total_duration(&self) -> Option<std::time::Duration> {
         None
+    }
+}
+
+/// Passes a sound through untouched and measures it: the RMS of five frequency bands per
+/// ~20 ms block goes to `Levels` (the UI polls it and moves the white bars on the tile).
+/// The bands come from one-pole low-pass splitters on the mono mix. Cheap, no FFT.
+struct Tap<S: Source<Item = f32>> {
+    inner: S,
+    levels: Arc<Levels>,
+    channels: u16,
+    rate: u32,
+    alpha: [f32; BANDS - 1],
+    lp: [f32; BANDS - 1],
+    frame_sum: f32,
+    frame_pos: u16,
+    acc: [f32; BANDS],
+    frames: u32,
+    block: u32,
+}
+
+impl<S: Source<Item = f32>> Tap<S> {
+    fn new(inner: S, levels: Arc<Levels>) -> Self {
+        let channels = inner.channels().max(1);
+        let rate = inner.sample_rate().max(8000);
+        let mut alpha = [0.0f32; BANDS - 1];
+        for (a, hz) in alpha.iter_mut().zip(BAND_EDGES.iter()) {
+            *a = 1.0 - (-2.0 * std::f32::consts::PI * hz / rate as f32).exp();
+        }
+        Tap {
+            inner,
+            levels,
+            channels,
+            rate,
+            alpha,
+            lp: [0.0; BANDS - 1],
+            frame_sum: 0.0,
+            frame_pos: 0,
+            acc: [0.0; BANDS],
+            frames: 0,
+            block: (rate / 50).max(256),
+        }
+    }
+
+    fn feed(&mut self, x: f32) {
+        let mut prev = 0.0f32;
+        for i in 0..BANDS - 1 {
+            self.lp[i] += self.alpha[i] * (x - self.lp[i]);
+            let band = self.lp[i] - prev;
+            self.acc[i] += band * band;
+            prev = self.lp[i];
+        }
+        let top = x - prev;
+        self.acc[BANDS - 1] += top * top;
+        self.frames += 1;
+        if self.frames >= self.block {
+            self.flush();
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.frames == 0 {
+            return;
+        }
+        let n = self.frames as f32;
+        let mut out = [0.0f32; BANDS];
+        for (o, a) in out.iter_mut().zip(self.acc.iter()) {
+            *o = (a / n).sqrt();
+        }
+        self.levels.note_bands(&out);
+        self.acc = [0.0; BANDS];
+        self.frames = 0;
+    }
+}
+
+impl<S: Source<Item = f32>> Iterator for Tap<S> {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        let s = self.inner.next();
+        match s {
+            Some(x) => {
+                self.frame_sum += x;
+                self.frame_pos += 1;
+                if self.frame_pos >= self.channels {
+                    let mono = self.frame_sum / self.channels as f32;
+                    self.frame_sum = 0.0;
+                    self.frame_pos = 0;
+                    self.feed(mono);
+                }
+            }
+            None => self.flush(),
+        }
+        s
+    }
+}
+
+impl<S: Source<Item = f32>> Source for Tap<S> {
+    fn current_frame_len(&self) -> Option<usize> {
+        self.inner.current_frame_len()
+    }
+
+    fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.rate
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        self.inner.total_duration()
     }
 }
 
@@ -798,7 +958,7 @@ impl Engine {
         if name == DISABLED {
             return None;
         }
-        match Output::open(name, fall_back) {
+        match Output::open(name, fall_back, Arc::clone(&self.levels)) {
             Ok(o) => Some(o),
             Err(e) => {
                 (self.on_error)(e);
@@ -810,6 +970,7 @@ impl Engine {
     fn play(&mut self, file: &str, volume: f32, looped: bool, fx: u32) {
         self.retry_missing_outputs();
         let overlap = self.settings.as_ref().map(|s| s.overlap).unwrap_or(false);
+        self.levels.set_sound_file(file);
         let mut errors = Vec::new();
         for out in [self.primary.as_mut(), self.secondary.as_mut()].into_iter().flatten() {
             if let Err(e) = out.play(file, volume, looped, overlap, fx) {
@@ -1058,6 +1219,23 @@ mod tests {
         assert!((r.output_db - to_db(0.2)).abs() < 0.01);
         let again = l.take();
         assert_eq!(again.input_db, -100.0);
+    }
+
+    #[test]
+    fn tap_hears_bass_in_the_low_band_and_leaves_the_sound_alone() {
+        use rodio::buffer::SamplesBuffer;
+        let rate = 44_100u32;
+        let wave: Vec<f32> = (0..rate)
+            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 60.0 * i as f32 / rate as f32).sin())
+            .collect();
+        let levels = Arc::new(Levels::default());
+        let tap = Tap::new(SamplesBuffer::new(1, rate, wave.clone()), Arc::clone(&levels));
+        let out: Vec<f32> = tap.collect();
+        assert_eq!(out, wave); // untouched
+        let r = levels.take_sound();
+        assert!(r.bands[0] > 0.2, "bass band: {:?}", r.bands);
+        assert!(r.bands[4] < 0.05, "treble band: {:?}", r.bands);
+        assert_eq!(levels.take_sound().bands, [0.0; BANDS]); // read once, then start over
     }
 
     #[test]
