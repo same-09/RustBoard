@@ -24,14 +24,19 @@
     </aside>
 
     <div class="page">
-      <header class="bar">
+      <header class="bar" data-tauri-drag-region>
         <button class="island preset-btn" id="preset-btn" title="Presets" aria-haspopup="menu">
           <span id="preset-name"></span>
           <span class="chev" id="preset-chev"></span>
         </button>
 
-        <span class="grow"></span>
+        <span class="grow" data-tauri-drag-region></span>
 
+        <div class="winctl" id="winctl" hidden>
+          <button id="win-min" type="button" aria-label="Minimize" data-no-tooltip><svg viewBox="0 0 14 14"><path d="M2 7H12"/></svg></button>
+          <button id="win-max" type="button" aria-label="Maximize" data-no-tooltip></button>
+          <button id="win-close" type="button" class="x" aria-label="Close" data-no-tooltip><svg viewBox="0 0 14 14"><path d="M2.5 2.5L11.5 11.5M11.5 2.5L2.5 11.5"/></svg></button>
+        </div>
       </header>
 
       <div id="update-bar" hidden>

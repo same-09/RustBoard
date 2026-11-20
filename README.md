@@ -102,4 +102,4 @@ sounds + mic do not clip on the cable.
 
 The setup `.exe` is NSIS (made by Tauri). Its images are `src-tauri/installer/sidebar.bmp` (164x314) and `header.bmp` (150x57),
 set in `tauri.conf.json` > `bundle.windows.nsis`. The pages and buttons stay the Windows style; NSIS cannot draw HTML.
-The HTML mock in `installer-ui/` needs its own Tauri installer app to be used.
+The custom setup UI (Rustboard style, Liner-style top bar) is in `installer-ui/`. It is not wired into the build yet: it needs its own Tauri installer app (see `installer-ui/README.md`).

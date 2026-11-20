@@ -823,7 +823,33 @@ async function checkForUpdate() {
   }
 }
 
+/* ---------- window controls (frameless window) ---------- */
+
+const WIN_SVG = {
+  max: '<svg viewBox="0 0 14 14"><rect x="2" y="2" width="10" height="10" rx="2"/></svg>',
+  restore: '<svg viewBox="0 0 14 14"><rect x="2" y="4.25" width="7.75" height="7.75" rx="1.75"/><path d="M4.5 2H10.25C11.22 2 12 2.78 12 3.75V9.5"/></svg>',
+};
+
+function initWindowControls() {
+  const box = $('#winctl');
+  const win = isTauri ? window.__TAURI__.window?.getCurrentWindow?.() : null;
+  if (!box || !win) return; // browser mock mode: no custom controls
+  box.hidden = false;
+  const max = $('#win-max');
+  const sync = async () => {
+    const m = await win.isMaximized().catch(() => false);
+    max.innerHTML = m ? WIN_SVG.restore : WIN_SVG.max;
+    max.setAttribute('aria-label', m ? 'Restore' : 'Maximize');
+  };
+  $('#win-min').onclick = () => win.minimize();
+  max.onclick = () => win.toggleMaximize();
+  $('#win-close').onclick = () => win.close();
+  win.onResized(sync);
+  sync();
+}
+
 async function init() {
+  initWindowControls();
   wire();
   cfg = await call('get_state');
   lastVolume = cfg.volume || 100;
