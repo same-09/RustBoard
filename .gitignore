@@ -5,3 +5,10 @@ __pycache__/
 
 rustboard.key
 rustboard.key.pub
+
+# custom setup
+setup/src-tauri/target/
+setup/src-tauri/gen/
+setup/src-tauri/payload/*.exe
+setup/dist/
+dist-setup/

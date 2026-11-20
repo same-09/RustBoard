@@ -68,7 +68,8 @@ pub fn run(app: AppHandle, url: String, digest: Option<String>) -> Result<(), St
 
     std::thread::spawn(move || {
         let result = download(&app, &url, digest).and_then(|path| {
-            // /P = passive (progress only), /R = start Rustboard again when done (Tauri NSIS flags)
+            // /P = no window, install over the current copy; /R = start Rustboard again when done
+            // (read by our own setup in `setup/src-tauri/src/main.rs`)
             std::process::Command::new(&path)
                 .args(["/P", "/R"])
                 .spawn()

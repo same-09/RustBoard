@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hapus Rustboard</title>
+<style>
+/* Gaya sama dengan ui/style.css (token, kontrol, panel, kartu setting). */
+:root {
+  --bg-canvas: #e4e4e7;
+  --bg-primary: #f5f5f7;
+  --bg-elevated: #e6e6eb;
+  --bg-panel: #dedee3;
+  --bg-glass: rgba(255, 255, 255, 0.55);
+  --surface-glass: rgba(245, 245, 247, 0.92);
+
+  --border-primary: #e4e4e7;
+  --border-a14: rgba(0, 0, 0, 0.06);
+  --border-a33: rgba(0, 0, 0, 0.14);
+
+  --text-primary: #18181b;
+  --text-secondary: rgba(0, 0, 0, 0.65);
+  --text-tertiary: rgba(0, 0, 0, 0.45);
+
+  --accent: #ff3b3b;
+  --ok: #16a34a;
+
+  --btn-bg: #18181b;
+  --btn-text: #ffffff;
+
+  --fill-subtle: rgba(0, 0, 0, 0.03);
+  --fill: rgba(0, 0, 0, 0.05);
+  --fill-hover: rgba(0, 0, 0, 0.08);
+  --fill-strong: rgba(0, 0, 0, 0.1);
+
+  --amb-l: 72%;
+  --amb-a: 0.34;
+
+  --r-control: 8px;
+  --r-item: 12px;
+  --r-panel: 20px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --hue: 232;
+  --font: "SF Pro", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-canvas: #000000;
+    --bg-primary: #0a0a0a;
+    --bg-elevated: #141414;
+    --bg-panel: #1a1a1a;
+    --bg-glass: rgba(70, 70, 70, 0.2);
+    --surface-glass: rgba(22, 22, 24, 0.9);
+
+    --border-primary: #1a1a1a;
+    --border-a14: rgba(255, 255, 255, 0.08);
+    --border-a33: rgba(255, 255, 255, 0.2);
+
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.7);
+    --text-tertiary: rgba(255, 255, 255, 0.45);
+
+    --accent: #ff4d4d;
+    --ok: #4ade80;
+
+    --btn-bg: #d9d9dd;
+    --btn-text: #000000;
+
+    --fill-subtle: rgba(255, 255, 255, 0.04);
+    --fill: rgba(255, 255, 255, 0.07);
+    --fill-hover: rgba(255, 255, 255, 0.1);
+    --fill-strong: rgba(255, 255, 255, 0.14);
+
+    --amb-l: 42%;
+    --amb-a: 0.32;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: 400 13px/1.4 var(--font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-synthesis: none;
+}
+
+/* Liner hides scrollbars and the text cursor everywhere except in inputs */
+*::-webkit-scrollbar { display: none; }
+* { scrollbar-width: none; user-select: none; }
+input { user-select: text; }
+
+html { background: var(--bg-canvas); }
+body { overflow: hidden; }
+
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 55% at 14% -5%, hsl(var(--hue) 50% var(--amb-l) / var(--amb-a)), transparent 70%),
+    radial-gradient(55% 50% at 105% 105%, hsl(calc(var(--hue) + 55) 45% var(--amb-l) / calc(var(--amb-a) * 0.75)), transparent 70%);
+}
+.ambient.swap { animation: amb-in 700ms var(--ease); }
+@keyframes amb-in { from { opacity: 0.3; } to { opacity: 1; } }
+
+/* ---------- base controls ---------- */
+button, select, input { font: inherit; color: inherit; }
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--border-a14);
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, opacity 150ms ease, transform 100ms ease;
+}
+button:hover { background: var(--border-a33); }
+button:active { transform: scale(0.96); }
+button:disabled { opacity: 0.5; pointer-events: none; }
+button svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+
+button.primary { background: var(--btn-bg); color: var(--btn-text); }
+button.primary:hover { background: var(--btn-bg); opacity: 0.88; }
+
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--text-primary) 70%, transparent); outline-offset: 1px; }
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.icon-btn:hover { background: var(--border-a14); color: var(--text-primary); }
+.icon-btn.fill { background: var(--border-a14); color: var(--text-primary); }
+.icon-btn.fill:hover { background: var(--border-a33); }
+.icon-btn.small { width: 26px; height: 26px; border-radius: 7px; }
+.icon-btn.small svg { width: 14px; height: 14px; }
+.icon-btn.big { width: 34px; height: 34px; border-radius: 10px; }
+.icon-btn.big svg { width: 16px; height: 16px; }
+.icon-btn.danger:hover { color: var(--accent); }
+
+input[type="text"], input[type="number"], select {
+  height: 36px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--r-control);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13.5px;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+input[type="text"]:hover, input[type="number"]:hover, select:hover { border-color: var(--border-a33); }
+input[type="text"]:focus, input[type="number"]:focus, select:focus { border-color: var(--border-a33); }
+input::placeholder { color: var(--text-tertiary); }
+
+select {
+  appearance: none;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+  cursor: pointer;
+}
+
+/* range: thin track, thumb shows on hover (Liner slider) */
+input[type="range"] {
+  --p: 0%;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 99px;
+  background: linear-gradient(to right, var(--text-primary) var(--p), var(--fill-strong) var(--p));
+}
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  border: 0;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transform: scale(0);
+  transition: transform 150ms var(--ease);
+}
+input[type="range"]:hover::-webkit-slider-thumb,
+input[type="range"]:active::-webkit-slider-thumb,
+input[type="range"]:focus-visible::-webkit-slider-thumb { transform: scale(1); }
+input[type="range"]:focus-visible { outline: none; }
+
+/* switch (Liner ToggleSwitch) */
+input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border-radius: 99px;
+  background: var(--fill-strong);
+  cursor: pointer;
+  transition: background 200ms ease;
+}
+input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: left 300ms cubic-bezier(0.34, 1.3, 0.64, 1), width 300ms cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+input[type="checkbox"]:checked { background: color-mix(in srgb, var(--text-primary) 38%, transparent); }
+input[type="checkbox"]:checked::after { left: 18px; }
+input[type="checkbox"]:active::after { width: 22px; }
+input[type="checkbox"]:checked:active::after { left: 14px; }
+.app {
+  height: 100%;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+}
+.rail {
+  align-self: flex-start;
+  width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 0;
+  border-radius: var(--r-item);
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+}
+.logo svg { display: block; width: 28px; height: 21px; fill: var(--text-primary); }
+.rail-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+  opacity: 0.55;
+}
+.rail-btn:hover { background: transparent; opacity: 0.95; }
+.rail-btn svg { width: 24px; height: 24px; stroke-width: 1.7; }
+.page { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding-bottom: 8px;
+}
+.grow { flex: 1; }
+.island {
+  height: 38px;
+  border-radius: 10px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+}
+.island:hover { background: var(--fill-hover); }
+.live-btn { padding: 0 16px; font-weight: 600; background: var(--btn-bg); color: var(--btn-text); backdrop-filter: none; }
+.live-btn:hover { background: var(--btn-bg); opacity: 0.88; }
+.live-btn.on { background: var(--accent); color: #fff; opacity: 1; }
+.live-btn.on svg { display: none; }
+.live-btn.on::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  animation: breathe 1.8s ease-in-out infinite;
+}
+.live-btn.on #live-ico { display: none; }
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px 8px 0;
+  border-radius: 14px 14px 0 0;
+  background: var(--fill-subtle);
+  transition: opacity 250ms var(--ease);
+}
+.panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 6px 10px 8px;
+}
+.panel-head h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.cover {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.72);
+  background:
+    radial-gradient(circle at 24% 20%, hsl(var(--h) 75% 55% / 0.6), transparent 62%),
+    radial-gradient(circle at 80% 85%, hsl(calc(var(--h) + 45) 70% 50% / 0.5), transparent 58%),
+    #101012;
+}
+.cover > svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cover .go {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.cover .go svg { width: 16px; height: 16px; fill: currentColor; stroke: none; }
+.sound:hover .cover .go, .cover:focus-visible .go { opacity: 1; }
+.cover.big { width: 56px; height: 56px; border-radius: 10px; }
+.cover.big > svg { width: 24px; height: 24px; }
+.empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 36px 20px; text-align: center; }
+.empty .cover { margin-bottom: 8px; }
+.empty .t { font-size: 15px; font-weight: 600; }
+.empty .d { max-width: 240px; margin-bottom: 10px; color: var(--text-tertiary); font-size: 13px; line-height: 18px; }
+.muted { color: var(--text-tertiary); }
+.modal-body button, .set-row .ctl button { height: 30px; padding: 0 12px; font-size: 13px; }
+.txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.txt .t { font-size: 14px; font-weight: 500; line-height: 18px; letter-spacing: -0.005em; }
+.txt .d { color: var(--text-tertiary); font-size: 12px; line-height: 17px; }
+.set-section h4 { margin: 0 0 8px 2px; font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
+.set-card { overflow: hidden; border-radius: var(--r-item); background: var(--fill); }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 52px; padding: 10px 16px; }
+.set-row + .set-row { box-shadow: inset 0 1px 0 var(--border-a14); }
+.set-row.col { flex-direction: column; align-items: stretch; gap: 10px; }
+.set-row .ctl { display: flex; align-items: center; gap: 8px; flex: none; }
+.set-row .ctl select { width: 220px; }
+.set-row .ctl input[type="range"] { width: 150px; }
+.set-row .ctl .muted { min-width: 34px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.logo { cursor: pointer; border-radius: 8px; }
+.rail-btn.active { opacity: 1; }
+@keyframes page-in { from { opacity: 0; transform: translateY(8px); } }
+.live-dock { position: fixed; left: 50%; bottom: 16px; z-index: 5; transform: translateX(-50%); }
+.live-dock .live-btn { height: 44px; padding: 0 24px; border-radius: 99px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28); font-size: 14px; }
+.live-dock .live-btn svg { width: 17px; height: 17px; }
+.winctl {
+  flex: none;
+  height: 38px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0.35));
+  backdrop-filter: blur(20px) saturate(160%);
+}
+.winctl[hidden] { display: none; }
+.winctl button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: #fff;
+  opacity: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 150ms, opacity 150ms, transform 60ms;
+}
+.winctl button:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
+.winctl button:active { transform: scale(0.95); }
+.winctl button.x:hover { background: #e81123; color: #fff; }
+.winctl svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* ---------- setup only ---------- */
+.rail .dots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.rail .dots li { width: 6px; height: 6px; border-radius: 50%; background: var(--fill-strong); transition: background 200ms ease, transform 300ms var(--ease); }
+.rail .dots li.done { background: var(--text-tertiary); }
+.rail .dots li.on { background: var(--text-primary); transform: scale(1.4); }
+.tag { display: inline-flex; align-items: center; padding: 0 14px; font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
+.stage { flex: 1; min-height: 0; display: flex; }
+.stage > .panel { flex: 1; animation: page-in 380ms var(--ease); }
+.body { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 18px; padding: 4px 6px 84px; }
+.body > .view { width: 100%; max-width: 560px; margin: 0 auto; }
+.body > .view.stack { display: flex; flex-direction: column; gap: 18px; }
+.empty .d { max-width: 300px; }
+.set-row input[type="text"] { flex: 1; }
+.prog { width: 260px; margin-top: 10px; }
+.track { height: 4px; border-radius: 99px; background: var(--fill-strong); overflow: hidden; }
+.track > i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--text-primary); transition: width 250ms var(--ease); }
+.prog .muted { margin-top: 8px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; }
+.empty .set-card { width: 320px; margin-top: 12px; text-align: left; }
+.live-dock { display: flex; gap: 8px; }
+.live-dock .back { height: 44px; padding: 0 20px; border-radius: 99px; background: var(--bg-glass); backdrop-filter: blur(20px); font-size: 14px; font-weight: 600; }
+.live-dock .back:hover { background: var(--fill-hover); }
+.winctl button:disabled { opacity: 0.25; }
+.live-btn.danger { background: var(--accent); color: #fff; opacity: 1; }
+.live-btn.danger:hover { background: var(--accent); opacity: 0.88; }
+</style>
+</head>
+<body>
+<div class="ambient" id="ambient" aria-hidden="true"></div>
+
+<div class="app">
+  <aside class="rail">
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 32 24"><rect x="1" y="9" width="4" height="6" rx="2"/><rect x="8" y="4" width="4" height="16" rx="2"/><rect x="15" y="0" width="4" height="24" rx="2"/><rect x="22" y="6" width="4" height="12" rx="2"/><rect x="29" y="10" width="3" height="4" rx="1.5"/></svg>
+    </div>
+    <ol class="dots" id="dots" aria-hidden="true"><li></li><li></li><li></li></ol>
+  </aside>
+
+  <div class="page">
+    <header class="bar" data-tauri-drag-region>
+      <span class="island tag">Hapus Rustboard</span>
+      <span class="grow" data-tauri-drag-region></span>
+      <div class="winctl" data-no-window-drag>
+        <button id="min" type="button" aria-label="Kecilkan"><svg viewBox="0 0 14 14"><path d="M2 7H12"/></svg></button>
+        <button id="max" type="button" aria-label="Besarkan" disabled><svg viewBox="0 0 14 14"><rect x="2" y="2" width="10" height="10" rx="2"/></svg></button>
+        <button id="close" type="button" class="x" aria-label="Tutup"><svg viewBox="0 0 14 14"><path d="M2.5 2.5L11.5 11.5M11.5 2.5L2.5 11.5"/></svg></button>
+      </div>
+    </header>
+
+    <main class="stage">
+      <section class="panel">
+        <div class="panel-head"><h2 id="title"></h2><span class="count" id="count"></span></div>
+        <div class="body">
+
+          <div class="view empty" data-v="0">
+            <div class="cover big" style="--h:232"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 8v8M20 11v2"/></svg></div>
+            <div class="t">Hapus Rustboard dari komputer ini?</div>
+            <div class="d">Tutup Rustboard dulu kalau masih jalan. Shortcut dan file programnya akan dihapus.</div>
+            <div class="set-card"><label class="set-row"><div class="txt"><div class="t">Hapus pengaturan juga</div><div class="d">Pengaturan, preset, dan pintasan tombol.</div></div><div class="ctl"><input type="checkbox" id="optData"></div></label></div>
+          </div>
+
+          <div class="view empty" data-v="1" hidden>
+            <div class="cover big" style="--h:200"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 8v8M20 11v2"/></svg></div>
+            <div class="t" id="workT">Menghapus Rustboard</div>
+            <div class="d" id="workD">Tunggu sebentar. Jangan tutup jendela ini.</div>
+            <div class="prog"><div class="track"><i id="fill"></i></div><div class="muted" id="msg">Menyiapkan…</div></div>
+          </div>
+
+          <div class="view empty" data-v="2" hidden>
+            <div class="cover big" style="--h:150"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 8v8M20 11v2"/></svg></div>
+            <div class="t">Rustboard sudah dihapus</div>
+            <div class="d">Terima kasih sudah memakai Rustboard.</div>
+          </div>
+
+        </div>
+      </section>
+    </main>
+
+    <div class="live-dock">
+      <button class="back" id="back" type="button">Batal</button>
+      <button class="island live-btn danger" id="next" type="button">Hapus</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Kontrak dengan Rust (Tauri v2, withGlobalTauri: true):
+//   command  uninstall(opts)   opts = { removeData }
+//   command  finish()          tutup uninstaller
+//   command  cancel()          tutup uninstaller
+//   event    uninstall-progress  { percent, message }
+const $ = s => document.querySelector(s);
+const T = window.__TAURI__;
+const call = (cmd, args) => T ? T.core.invoke(cmd, args) : mock(cmd, args);
+const win = T?.window?.getCurrentWindow?.();
+const CFG = { canMaximize: false };
+const TITLES = ["Hapus Rustboard", "Menghapus", "Selesai"];
+const HUES = [232, 200, 150];
+const views = [...document.querySelectorAll(".view")];
+const dots = [...document.querySelectorAll("#dots li")];
+const st = { page: 0, busy: false, failed: false };
+
+function ambient(h) {
+  const root = document.documentElement, amb = $("#ambient");
+  if (root.style.getPropertyValue("--hue") === String(h)) return;
+  root.style.setProperty("--hue", h);
+  amb.classList.remove("swap"); void amb.offsetWidth; amb.classList.add("swap");
+}
+function setProgress(p, text) {
+  $("#fill").style.width = p + "%";
+  if (text) $("#msg").textContent = text;
+}
+function render() {
+  const p = st.page;
+  views.forEach((v, i) => v.hidden = i !== p);
+  dots.forEach((d, i) => { d.classList.toggle("on", i === p); d.classList.toggle("done", i < p); });
+  $("#title").textContent = TITLES[p];
+  $("#count").textContent = (p + 1) + " dari " + TITLES.length;
+  $("#back").hidden = !(p === 0 || (p === 1 && st.failed));
+  $("#back").textContent = p === 0 ? "Batal" : "Kembali";
+  $("#next").disabled = st.busy;
+  $("#next").classList.toggle("danger", p === 0 || (p === 1 && st.failed));
+  $("#next").textContent = ["Hapus", st.failed ? "Coba lagi" : "Menghapus…", "Tutup"][p];
+  ambient(HUES[p]);
+}
+async function run() {
+  st.page = 1; st.busy = true; st.failed = false;
+  $("#workT").textContent = "Menghapus Rustboard";
+  $("#workT").classList.remove("bad");
+  $("#workD").textContent = "Tunggu sebentar. Jangan tutup jendela ini.";
+  setProgress(0, "Menyiapkan…");
+  render();
+  try {
+    await call("uninstall", { removeData: $("#optData").checked });
+    setProgress(100, "Selesai");
+    st.busy = false; st.page = 2;
+  } catch (err) {
+    st.busy = false; st.failed = true;
+    $("#workT").textContent = "Penghapusan gagal";
+    $("#workT").classList.add("bad");
+    $("#workD").textContent = "Penghapusan berhenti. Tutup Rustboard kalau masih jalan, lalu coba lagi.";
+    $("#msg").textContent = String(err?.message || err || "Kesalahan tidak diketahui");
+  }
+  render();
+}
+
+$("#next").onclick = () => {
+  if (st.page === 0 || (st.page === 1 && st.failed)) run();
+  else if (st.page === 2) call("finish");
+};
+$("#back").onclick = () => { if (st.page === 0) call("cancel"); else { st.page = 0; st.failed = false; render(); } };
+$("#close").onclick = () => { if (!st.busy) call("cancel"); };
+$("#min").onclick = () => win?.minimize();
+$("#max").disabled = !CFG.canMaximize;
+$("#max").onclick = () => win?.toggleMaximize();
+if (T) T.event.listen("uninstall-progress", e => setProgress(e.payload.percent, e.payload.message));
+
+// Mock untuk uji di browser (tanpa Tauri)
+function mock(cmd) {
+  if (cmd === "uninstall") return new Promise(res => {
+    const msgs = ["Menutup Rustboard…", "Menghapus shortcut", "Menghapus file program", "Menghapus entri Windows", "Merapikan sisa file"];
+    let p = 0;
+    const t = setInterval(() => {
+      p = Math.min(99, p + 4 + Math.random() * 7);
+      setProgress(p, msgs[Math.min(4, Math.floor(p / 20))]);
+      if (p >= 99) { clearInterval(t); res(); }
+    }, 120);
+  });
+  return Promise.resolve();
+}
+render();
+</script>
+</body>
+</html>

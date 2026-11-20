@@ -98,8 +98,23 @@ Settings > *Discord (VB-Cable)* shows whether a cable was found and lets you pic
 (default: `Auto`, which prefers VB-CABLE, then other virtual cables). While live, sounds are 3 dB lower so
 sounds + mic do not clip on the cable.
 
-## Installer look
+## Installer look (custom setup + uninstaller)
 
-The setup `.exe` is NSIS (made by Tauri). Its images are `src-tauri/installer/sidebar.bmp` (164x314) and `header.bmp` (150x57),
-set in `tauri.conf.json` > `bundle.windows.nsis`. The pages and buttons stay the Windows style; NSIS cannot draw HTML.
-The custom setup UI (Rustboard style, Liner-style top bar) is in `installer-ui/`. It is not wired into the build yet: it needs its own Tauri installer app (see `installer-ui/README.md`).
+The setup `.exe` is **not** NSIS any more. It is our own small Tauri app in `setup/` that shows
+`installer-ui/` (setup) and `uninstaller-ui/` (uninstall) in the Rustboard style.
+
+- It embeds `rustboard.exe`, writes it to `%LOCALAPPDATA%\Rustboard` (or the folder you pick), makes the
+  Start menu / desktop shortcuts, the optional autostart, and the "Apps & features" entry.
+- It copies itself to `<install folder>\uninstall.exe`. That exe, run with `--uninstall`, shows the uninstall UI.
+- The in-app updater still starts it with `/P /R`: no window, install over the current copy, start Rustboard again.
+- Per-user only. No admin prompt.
+
+Build it on Windows (also what the workflow does):
+
+```
+cargo install tauri-cli --version "^2" --locked
+pwsh tools/build_setup.ps1        # -> dist-setup/Rustboard_<version>_x64-setup.exe
+```
+
+`cargo tauri build` inside `src-tauri` still makes the old NSIS setup (`tauri.conf.json` > `bundle.windows.nsis`),
+but releases no longer use it.

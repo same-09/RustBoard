@@ -20,7 +20,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            setup/src-tauri
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
 
       # tag v0.0.2  ->  app version 0.0.2 (the app compares it with the newest Release)
       - name: Set version from tag
@@ -28,17 +33,31 @@ jobs:
         shell: pwsh
         run: |
           $v = "${{ github.ref_name }}".TrimStart('v')
-          (Get-Content src-tauri/tauri.conf.json -Raw) -replace '"version": "[^"]*"', "`"version`": `"$v`"" | Set-Content src-tauri/tauri.conf.json
-          (Get-Content src-tauri/Cargo.toml -Raw) -replace '(?m)^version = "[^"]*"', "version = `"$v`"" | Set-Content src-tauri/Cargo.toml
+          foreach ($f in 'src-tauri/tauri.conf.json', 'setup/src-tauri/tauri.conf.json') {
+            (Get-Content $f -Raw) -replace '"version": "[^"]*"', "`"version`": `"$v`"" | Set-Content $f
+          }
+          foreach ($f in 'src-tauri/Cargo.toml', 'setup/src-tauri/Cargo.toml') {
+            (Get-Content $f -Raw) -replace '(?m)^version = "[^"]*"', "version = `"$v`"" | Set-Content $f
+          }
 
-      # Builds the NSIS setup (.exe with shortcuts). On a tag it also makes the
-      # GitHub Release and attaches the installer. No signing key needed.
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Builds the app exe, then the custom setup that embeds it -> dist-setup/Rustboard_x.y.z_x64-setup.exe
+      - name: Build app + custom setup
+        shell: pwsh
+        run: ./tools/build_setup.ps1
+
+      # On a tag: GitHub Release + the setup attached. No signing key needed.
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          projectPath: src-tauri
-          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: Rustboard ${{ github.ref_name }}
-          releaseDraft: false
-          prerelease: false
+          name: Rustboard ${{ github.ref_name }}
+          files: dist-setup/*-setup.exe
+
+      # Other pushes only test the build; keep the exe as a download for 7 days.
+      - name: Keep the setup (no tag)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rustboard-setup
+          path: dist-setup/*-setup.exe
+          retention-days: 7
