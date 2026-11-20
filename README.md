@@ -3,11 +3,11 @@
 Repo: https://github.com/same-09/RustBoard
 
 Port of the old C# / WPF Rustboard. Same idea: global keyboard shortcuts that
-play sounds and count things (deaths, kills...) into text files for streaming.
+play sounds, and "Go Live" sends them to Discord through a virtual cable.
 
 | Part | Language | Where |
 |---|---|---|
-| Backend: global keys, audio, counters, config | Rust ([Tauri 2](https://tauri.app)) | `src-tauri/src` |
+| Backend: global keys, audio, config | Rust ([Tauri 2](https://tauri.app)) | `src-tauri/src` |
 | UI | HTML, CSS, JS (no framework, no build step) | `ui/` |
 | Tools: config converter, mock backend for UI work | Python 3 (stdlib only) | `tools/` |
 
@@ -35,9 +35,10 @@ git push origin v0.0.1
 The workflow (`.github/workflows/build.yml`) builds `Rustboard_x.y.z_x64-setup.exe` (double-click: installer with
 Start menu + desktop shortcut) and attaches it to a GitHub Release. Pushes to `main` only test the build.
 
-**Updates:** there is no auto-install. On start the app asks GitHub for the newest Release; if it is newer than the
-running version, a bar says "New version ... is available" with a **Download** button that opens the Release page.
-Nothing needs signing, so no `TAURI_SIGNING_PRIVATE_KEY` secret is needed.
+**Updates:** on start the app asks GitHub for the newest Release; if it is newer than the running version, a bar says
+"New version ... is available" with an **Update** button. The app downloads the setup from our own Release (checks
+SHA-256 when GitHub gives one), starts it and quits. Nothing needs signing, so no `TAURI_SIGNING_PRIVATE_KEY` secret.
+Without a signature, trust comes only from HTTPS + our GitHub repo.
 
 ## Move your old settings
 
@@ -64,10 +65,9 @@ Mock backend: no sound, no global hotkeys (keys are read from the page).
 src-tauri/src/
   main.rs      Tauri commands + setup
   config.rs    config model, load/save (config.json)
-  counter.rs   counter text file: format "{0}", read, write
   audio.rs     audio thread: 2 outputs, mixer, mic passthrough (+ resampler), Go Live, VB-Cable detection
   hotkeys.rs   global key hook (rdev)
-  logic.rs     shortcut matching, counter actions, preset switch
+  logic.rs     shortcut matching, preset switch
   state.rs     shared app state
 ui/            index.html, style.css, js/{main,api,keys}.js
 tools/         convert_config.py, dev_server.py
@@ -79,7 +79,6 @@ tools/         convert_config.py, dev_server.py
 - **Audio formats:** mp3, wav, ogg, flac, m4a/aac, aiff. **wma is not supported.**
 - **Mic passthrough:** needs devices with 32-bit float audio. Mic and output may run at different sample rates
   (simple linear resampler, 40 ms jitter buffer).
-- **Counter files** are created when missing (the old app showed an error).
 - **Key names** are `rdev` names (`KeyA`, `Kp1`, `F5`...), not Windows VKeys.
 - **Linux:** the key hook needs X11 (no Wayland). **macOS:** allow Accessibility.
 - Cloning a preset clears its switch keys (two presets on one key fight).

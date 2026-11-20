@@ -92,17 +92,6 @@ def keys_of(node, where):
     return result
 
 
-def convert_counter(node):
-    return {
-        "name": text(node, "Name"),
-        "file": text(node, "File"),
-        "format": text(node, "Format", "{0}") or "{0}",
-        "increment": as_int(node, "Increment", 1),
-        "count": 0,  # old app also read the count from the text file
-        "error": None,
-    }
-
-
 def convert_sound(node):
     name = text(node, "Name")
     files_node = child(node, "Files")
@@ -119,20 +108,16 @@ def convert_sound(node):
 
 def convert_preset(node):
     name = text(node, "Name", "Preset")
-    counters = child(node, "CounterCollection")
     sounds = child(node, "SoundCollection")
     return {
         "name": name,
         "keys": keys_of(node, f"preset '{name}'"),
-        "counters": [convert_counter(c) for c in counters] if counters is not None else [],
         "sounds": [convert_sound(s) for s in sounds] if sounds is not None else [],
-        "selected_counter": 0,
         "selected_sound": 0,
     }
 
 
 def convert(root):
-    cs = child(root, "CounterShortcuts")
     ss = child(root, "SoundShortcuts")
 
     def sc(parent, name, where):
@@ -151,16 +136,8 @@ def convert(root):
         "secondary_output": text(root, "SecondaryOutput") or "Disabled",
         "mic_input": text(root, "MicInput") or "Disabled",
         "mic_output": text(root, "MicOutput") or "Disabled",
-        "enable": text(root, "Enable", "Both") if text(root, "Enable", "Both") in ("Both", "Counters", "Sounds") else "Both",
         "presets": presets,
         "selected_preset": as_int(root, "SelectedPresetIndex", 0),
-        "counter_shortcuts": {
-            "next": sc(cs, "Next", "counter shortcut Next"),
-            "previous": sc(cs, "Previous", "counter shortcut Previous"),
-            "increment": sc(cs, "Increment", "counter shortcut Increment"),
-            "decrement": sc(cs, "Decrement", "counter shortcut Decrement"),
-            "reset": sc(cs, "Reset", "counter shortcut Reset"),
-        },
         "sound_shortcuts": {
             "pause": sc(ss, "Pause", "sound shortcut Pause"),
             "continue": sc(ss, "Continue", "sound shortcut Continue"),
@@ -209,10 +186,9 @@ def main(argv):
     with open(dst, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
 
-    n_c = sum(len(p["counters"]) for p in cfg["presets"])
     n_s = sum(len(p["sounds"]) for p in cfg["presets"])
     print(f"Wrote {dst}")
-    print(f"  {len(cfg['presets'])} preset(s), {n_c} counter(s), {n_s} sound(s)")
+    print(f"  {len(cfg['presets'])} preset(s), {n_s} sound(s)")
     for w in warnings:
         print("  warning:", w)
     return 0

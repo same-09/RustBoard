@@ -6,7 +6,6 @@
 
 What is fake here:
   - no sound, no global hotkeys (key binding reads keys from the browser page)
-  - counter text files are NOT written
   - config is kept in tools/dev_config.json
 """
 
@@ -32,25 +31,15 @@ def default_config():
         "mic_input": "Disabled",
         "mic_output": "Disabled",
         "live_output": "Auto (VB-Cable)",
-        "enable": "Both",
         "presets": [
             {
                 "name": "New Preset",
                 "keys": [],
-                "counters": [],
                 "sounds": [],
-                "selected_counter": 0,
                 "selected_sound": 0,
             }
         ],
         "selected_preset": 0,
-        "counter_shortcuts": {
-            "next": {"keys": ["KpMultiply"]},
-            "previous": {"keys": []},
-            "increment": {"keys": ["KpPlus"]},
-            "decrement": {"keys": ["KpMinus"]},
-            "reset": {"keys": []},
-        },
         "sound_shortcuts": {
             "pause": {"keys": []},
             "continue": {"keys": []},
@@ -82,8 +71,6 @@ def normalize(cfg):
     if cfg["selected_preset"] >= len(cfg["presets"]):
         cfg["selected_preset"] = 0
     for p in cfg["presets"]:
-        if p["selected_counter"] >= len(p["counters"]):
-            p["selected_counter"] = 0
         if p["selected_sound"] >= len(p["sounds"]):
             p["selected_sound"] = 0
         for s in p["sounds"]:

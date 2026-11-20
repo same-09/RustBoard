@@ -3,11 +3,11 @@
 
 mod audio;
 mod config;
-mod counter;
 mod hotkeys;
 mod links;
 mod logic;
 mod state;
+mod updater;
 
 use audio::{AudioCmd, AudioSettings, Devices, LiveStatus};
 use config::Config;
@@ -33,37 +33,11 @@ fn missing_files(files: &[String]) -> Option<String> {
     }
 }
 
-/// Re-read counter files and re-check sound files for the whole config.
+/// Re-check sound files for the whole config.
 fn refresh(cfg: &mut Config) {
     for p in cfg.presets.iter_mut() {
-        for c in p.counters.iter_mut() {
-            counter::read_from_file(c);
-        }
         for s in p.sounds.iter_mut() {
             s.error = missing_files(&s.files);
-        }
-    }
-}
-
-/// Compare new counters with old ones and sync the text files, like the
-/// property setters in Counter.cs did.
-fn sync_counters(old: &Config, new: &mut Config) {
-    for (pi, p) in new.presets.iter_mut().enumerate() {
-        for (ci, c) in p.counters.iter_mut().enumerate() {
-            let prev = old.presets.get(pi).and_then(|op| op.counters.get(ci));
-            match prev {
-                Some(o) if o.file == c.file && o.format == c.format && o.count == c.count => {
-                    c.error = o.error.clone();
-                }
-                Some(o) if o.file != c.file => {
-                    // new file: take its number if it matches, then write
-                    counter::read_from_file(c);
-                    if c.error.is_none() {
-                        counter::write_to_file(c);
-                    }
-                }
-                _ => counter::write_to_file(c),
-            }
         }
     }
 }
@@ -81,7 +55,6 @@ fn set_config(state: State<'_, AppState>, config: Config) -> Result<Config, Stri
     new.normalize();
     let mut cur = state.config.lock().map_err(|e| e.to_string())?;
 
-    sync_counters(&cur, &mut new);
     for p in new.presets.iter_mut() {
         for s in p.sounds.iter_mut() {
             s.error = missing_files(&s.files);
@@ -94,7 +67,7 @@ fn set_config(state: State<'_, AppState>, config: Config) -> Result<Config, Stri
     Ok(new)
 }
 
-/// Switch preset from the UI. Re-reads counter files, like the old PresetSelected command.
+/// Switch preset from the UI.
 #[tauri::command]
 fn select_preset(state: State<'_, AppState>, index: usize) -> Result<Config, String> {
     let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
@@ -102,9 +75,6 @@ fn select_preset(state: State<'_, AppState>, index: usize) -> Result<Config, Str
         return Err("preset not found".into());
     }
     cfg.selected_preset = index;
-    for c in cfg.presets[index].counters.iter_mut() {
-        counter::read_from_file(c);
-    }
     state.persist(&cfg);
     Ok(cfg.clone())
 }
@@ -174,6 +144,13 @@ fn open_url(url: String) -> Result<(), String> {
     cmd.arg(&url).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Download the new setup from our GitHub Release, start it and quit.
+/// Progress: "update-progress" {done,total}. Failure: "update-error" (string).
+#[tauri::command]
+fn install_update(app: tauri::AppHandle, url: String, digest: Option<String>) -> Result<(), String> {
+    updater::run(app, url, digest)
+}
+
 /// After this, the next key release sends a "keys-bound" event with the held keys.
 #[tauri::command]
 fn begin_bind(state: State<'_, AppState>) {
@@ -225,6 +202,7 @@ fn main() {
             set_live,
             app_version,
             open_url,
+            install_update,
             begin_bind,
             cancel_bind
         ])

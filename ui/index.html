@@ -11,7 +11,7 @@
 
   <div class="app">
     <aside class="rail">
-      <div class="logo" title="Rustboard">
+      <div class="logo" id="open-home" title="Home" role="button" tabindex="0">
         <svg viewBox="0 0 32 24" aria-hidden="true">
           <rect x="1" y="9" width="4" height="6" rx="2"/>
           <rect x="8" y="4" width="4" height="16" rx="2"/>
@@ -32,17 +32,6 @@
 
         <span class="grow"></span>
 
-        <div class="tabs" id="enable-seg" role="group" aria-label="Enable">
-          <span class="thumb"></span>
-          <button data-v="Both">Both</button>
-          <button data-v="Counters">Counters</button>
-          <button data-v="Sounds">Sounds</button>
-        </div>
-
-        <button class="island live-btn" id="go-live" title="Send your sounds and your mic to Discord through the virtual cable (VB-CABLE)">
-          <span id="live-ico"></span>
-          <span id="live-label">Go Live</span>
-        </button>
       </header>
 
       <div id="update-bar" hidden>
@@ -52,17 +41,9 @@
       </div>
 
       <main class="split">
-        <section class="panel" id="counters-panel">
-          <div class="panel-head">
-            <h2>Counters <span class="count" id="counter-count"></span><span class="off-tag">Off</span></h2>
-            <button class="icon-btn fill" id="counter-add" title="Add counter"></button>
-          </div>
-          <div class="list" id="counter-list"></div>
-        </section>
-
         <section class="panel" id="sounds-panel">
           <div class="panel-head">
-            <h2>Sounds <span class="count" id="sound-count"></span><span class="off-tag">Off</span></h2>
+            <h2>Sounds <span class="count" id="sound-count"></span></h2>
             <div class="vol">
               <button class="icon-btn" id="mute" title="Mute"></button>
               <input type="range" id="master" min="0" max="100" aria-label="Master volume">
@@ -78,6 +59,20 @@
           <div class="list" id="sound-list"></div>
         </section>
       </main>
+
+      <main class="settings" id="settings-page" hidden>
+        <section class="panel">
+          <div class="panel-head"><h2>Settings</h2></div>
+          <div class="set-scroll" id="settings-body"></div>
+        </section>
+      </main>
+
+      <div class="live-dock">
+        <button class="island live-btn" id="go-live" title="Send your sounds and your mic to Discord through the virtual cable (VB-CABLE)">
+          <span id="live-ico"></span>
+          <span id="live-label">Go Live</span>
+        </button>
+      </div>
     </div>
   </div>
 

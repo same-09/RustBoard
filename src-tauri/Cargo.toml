@@ -17,6 +17,10 @@ rdev = "0.5"
 # audio: rodio 0.19 re-exports cpal 0.15, used for device list + mic passthrough
 rodio = { version = "0.19", default-features = false, features = ["symphonia-all"] }
 
+# in-app update: download the setup from GitHub and check its SHA-256
+ureq = "2"
+sha2 = "0.10"
+
 [profile.release]
 opt-level = "s"
 lto = true

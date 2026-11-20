@@ -40,7 +40,6 @@ const ICONS = {
   chev: '<path d="M6 9l6 6 6-6"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
   bars: '<path d="M4 10v4M8 6v12M12 3v18M16 8v8M20 11v2"/>',
-  hash: '<path d="M5 9h14M5 15h14M10 4L8 20M16 4l-2 16"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
 };
 
@@ -118,21 +117,12 @@ async function sync() {
   if (dirty) await flush();
 }
 
-// take errors / counts computed by Rust, redraw only if something changed
+// take errors computed by Rust, redraw only if something changed
 function mergeResult(result) {
   let changed = false;
   result.presets.forEach((rp, pi) => {
     const mine = cfg.presets[pi];
     if (!mine) return;
-    rp.counters.forEach((rc, ci) => {
-      const m = mine.counters[ci];
-      if (!m) return;
-      if ((m.error || null) !== (rc.error || null) || m.count !== rc.count) {
-        m.error = rc.error;
-        m.count = rc.count;
-        changed = true;
-      }
-    });
     rp.sounds.forEach((rs, si) => {
       const m = mine.sounds[si];
       if (m && (m.error || null) !== (rs.error || null)) {
@@ -144,112 +134,12 @@ function mergeResult(result) {
   if (changed) render();
 }
 
-/* ---------- counters ---------- */
-
-// same rules as the Rust side: {0} = number, {{ and }} = braces
-function formatCount(fmt, n) {
-  let out = '';
-  for (let i = 0; i < fmt.length; i++) {
-    const c = fmt[i];
-    if (c === '{') {
-      if (fmt[i + 1] === '{') { out += '{'; i++; }
-      else if (fmt.slice(i, i + 3) === '{0}') { out += n; i += 2; }
-      else return null;
-    } else if (c === '}') {
-      if (fmt[i + 1] === '}') { out += '}'; i++; }
-      else return null;
-    } else out += c;
-  }
-  return out;
-}
-
-function bump(c, dir) {
-  c.count += dir * c.increment;
-  commit();
-  renderCounters();
-}
-
-function emptyState(kind, title, text, label, fn) {
-  const isSound = kind === 'sound';
+function emptyState(title, text, label, fn) {
   return h('div', { class: 'empty' },
-    h('div', { class: 'cover big', style: `--h:${isSound ? 250 : 170}` }, icon(isSound ? 'bars' : 'hash')),
+    h('div', { class: 'cover big', style: '--h:250' }, icon('bars')),
     h('div', { class: 't' }, title),
     h('div', { class: 'd' }, text),
     h('button', { class: 'primary', onclick: fn }, icon('plus'), label));
-}
-
-function renderCounters() {
-  const p = preset();
-  const list = $('#counter-list');
-  $('#counter-count').textContent = p.counters.length || '';
-  list.replaceChildren();
-  if (!p.counters.length) {
-    list.append(emptyState('counter', 'No counters', 'Count deaths, kills or wins into a text file your stream can read.', 'Add counter', () => $('#counter-add').click()));
-    return;
-  }
-  p.counters.forEach((c, i) => {
-    const sel = i === p.selected_counter;
-    const shown = formatCount(c.format, c.count);
-    const text = shown == null ? c.count : shown;
-    list.append(
-      h('div', {
-        class: 'counter' + (sel ? ' selected' : ''),
-        onclick: () => { p.selected_counter = i; commit(); renderCounters(); },
-      },
-        h('div', { class: 'c-top' },
-          h('div', { class: 'main' },
-            h('div', { class: 'name' },
-              sel ? h('i', { class: 'dot', title: 'Counter hotkeys act on this one' }) : null,
-              c.name || '(no name)'),
-            h('div', { class: 'sub' }, `${c.file ? basename(c.file) : 'no file'} · step ${c.increment}`),
-            c.error ? h('div', { class: 'err' }, c.error) : null),
-          h('div', { class: 'value', title: String(text) }, text)),
-        h('div', { class: 'c-bot' },
-          iconBtn('minus', 'Decrement', () => bump(c, -1), 'fill big'),
-          iconBtn('plus', 'Increment', () => bump(c, +1), 'fill big'),
-          h('span', { class: 'grow' }),
-          h('div', { class: 'acts' },
-            iconBtn('reset', 'Reset to 0', () => { c.count = 0; commit(); renderCounters(); }),
-            iconBtn('edit', 'Edit', () => openCounterDialog(clone(c), (d) => { p.counters[i] = d; commit(); renderCounters(); })),
-            iconBtn('trash', 'Remove', () => {
-              p.counters.splice(i, 1);
-              p.selected_counter = Math.max(0, Math.min(p.selected_counter, p.counters.length - 1));
-              commit();
-              renderCounters();
-            }, 'danger')))));
-  });
-}
-
-function openCounterDialog(d, onSave) {
-  const file = h('input', { type: 'text', value: d.file, placeholder: 'C:\\stream\\deaths.txt', oninput: () => { d.file = file.value; } });
-  const body = [
-    h('div', { class: 'field' }, h('label', {}, 'Name'),
-      h('input', { type: 'text', value: d.name, oninput: (e) => { d.name = e.target.value; } })),
-    h('div', { class: 'field' }, h('label', {}, 'Text file (shown on stream)'),
-      h('div', { class: 'inline' }, file,
-        h('button', {
-          onclick: async () => {
-            const [f] = await pickFiles({ filters: [{ name: 'Text', extensions: ['txt'] }] });
-            if (f) { d.file = f; file.value = f; }
-          },
-        }, 'Browse')),
-      h('span', { class: 'hint' }, 'You can type a new path. The file is created when it does not exist.')),
-    h('div', { class: 'field' }, h('label', {}, 'Format'),
-      h('input', { type: 'text', value: d.format, oninput: (e) => { d.format = e.target.value; } }),
-      h('span', { class: 'hint' }, '{0} is the number. Example: "Deaths: {0}".')),
-    h('div', { class: 'field' }, h('label', {}, 'Increment'),
-      h('input', { type: 'number', value: d.increment, oninput: (e) => { d.increment = parseInt(e.target.value, 10) || 0; } })),
-    h('div', { class: 'field' }, h('label', {}, 'Count'),
-      h('input', { type: 'number', value: d.count, oninput: (e) => { d.count = parseInt(e.target.value, 10) || 0; } })),
-  ];
-  openDialog({
-    title: d.name ? 'Edit counter' : 'New counter',
-    body,
-    buttons: [
-      { label: 'Cancel' },
-      { label: 'Save', primary: true, onclick: () => { if (!d.name.trim()) d.name = 'Counter'; d.error = null; onSave(d); } },
-    ],
-  });
 }
 
 /* ---------- sounds ---------- */
@@ -301,7 +191,7 @@ function renderSounds() {
   list.replaceChildren();
   setAmbient(p.sounds[p.selected_sound]);
   if (!p.sounds.length) {
-    list.append(emptyState('sound', 'No sounds yet', 'Add a sound file and give it a key. Press the key anywhere and it plays.', 'Add sound', () => $('#sound-add').click()));
+    list.append(emptyState('No sounds yet', 'Add a sound file and give it a key. Press the key anywhere and it plays.', 'Add sound', () => $('#sound-add').click()));
     return;
   }
   const select = (i) => {
@@ -416,28 +306,10 @@ function openSoundDialog(d, onSave) {
 function renderHeader() {
   $('#preset-name').textContent = preset().name || '(no name)';
 
-  document.querySelectorAll('#enable-seg button').forEach((b) => {
-    b.classList.toggle('on', b.dataset.v === cfg.enable);
-  });
-  $('#counters-panel').classList.toggle('off', cfg.enable === 'Sounds');
-  $('#sounds-panel').classList.toggle('off', cfg.enable === 'Counters');
-  placeThumb();
-
   $('#master').value = cfg.volume;
   paintRange($('#master'));
   setIcon($('#mute'), cfg.volume === 0 ? 'mute' : 'vol');
   $('#mute').title = cfg.volume === 0 ? 'Unmute' : 'Mute';
-}
-
-// sliding pill behind the active tab
-function placeThumb() {
-  const seg = $('#enable-seg');
-  const on = seg.querySelector('button.on');
-  const thumb = seg.querySelector('.thumb');
-  if (!on || !on.offsetWidth) return;
-  thumb.style.width = on.offsetWidth + 'px';
-  thumb.style.transform = `translateX(${on.offsetLeft}px)`;
-  if (!seg.classList.contains('ready')) requestAnimationFrame(() => seg.classList.add('ready'));
 }
 
 // slider fill follows the value
@@ -474,7 +346,7 @@ async function selectPreset(index) {
 }
 
 function addPreset() {
-  const fresh = { name: 'New Preset', keys: [], counters: [], sounds: [], selected_counter: 0, selected_sound: 0 };
+  const fresh = { name: 'New Preset', keys: [], sounds: [], selected_sound: 0 };
   openPresetDialog(fresh, (d) => {
     cfg.presets.push(d);
     cfg.selected_preset = cfg.presets.length - 1;
@@ -500,7 +372,7 @@ function deletePreset() {
   }
   openDialog({
     title: 'Delete preset',
-    body: h('p', {}, `Delete "${preset().name}" with its counters and sounds?`),
+    body: h('p', {}, `Delete "${preset().name}" with its sounds?`),
     buttons: [
       { label: 'Cancel' },
       {
@@ -706,6 +578,16 @@ async function toggleLive() {
 
 /* ---------- settings ---------- */
 
+let view = 'home';
+function showView(v) {
+  view = v;
+  const st = v === 'settings';
+  document.querySelector('.app').classList.toggle('in-settings', st);
+  $('.split').hidden = st;
+  $('#settings-page').hidden = !st;
+  $('#open-settings').classList.toggle('active', st);
+}
+
 async function openSettings() {
   try {
     devices = await call('list_devices');
@@ -762,7 +644,6 @@ async function openSettings() {
     ]);
   };
 
-  const cs = cfg.counter_shortcuts;
   const ss = cfg.sound_shortcuts;
 
   const cable = devices.cable;
@@ -797,27 +678,21 @@ async function openSettings() {
       row('Mic output', 'Send the mic to a device, for example a virtual cable. Go Live ignores this.', select('mic_output', devices.outputs)),
       row('Mic volume', null, range('mic_volume'))),
 
-    section('Counter shortcuts',
-      shortcut('Next counter', cs.next),
-      shortcut('Previous counter', cs.previous),
-      shortcut('Increment', cs.increment),
-      shortcut('Decrement', cs.decrement),
-      shortcut('Reset', cs.reset)),
-
     section('Sound shortcuts',
       shortcut('Pause all', ss.pause),
       shortcut('Continue', ss.continue),
       shortcut('Stop all', ss.stop)),
   ];
 
-  openDialog({ title: 'Settings', body, wide: true, buttons: [{ label: 'Done', primary: true }] });
+  $('#settings-body').replaceChildren(...body);
+  $('#settings-body').scrollTop = 0;
+  showView('settings');
 }
 
 /* ---------- render + wiring ---------- */
 
 function render() {
   renderHeader();
-  renderCounters();
   renderSounds();
 }
 
@@ -825,25 +700,18 @@ function wire() {
   setIcon($('#preset-chev'), 'chev');
   setIcon($('#open-settings'), 'gear');
   setIcon($('#live-ico'), 'mic');
-  setIcon($('#counter-add'), 'plus');
   setIcon($('#add-ico'), 'plus');
   setIcon($('#sound-stop'), 'stop');
   setIcon($('#sound-pause'), 'pause');
   setIcon($('#play-ico'), 'play');
 
   $('#preset-btn').addEventListener('click', openPresetMenu);
-  $('#open-settings').addEventListener('click', openSettings);
+  $('#open-settings').addEventListener('click', () => (view === 'settings' ? showView('home') : openSettings()));
+  $('#open-home').addEventListener('click', () => showView('home'));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && view === 'settings' && !dlg.open && !bindDlg.open) showView('home');
+  });
   $('#go-live').addEventListener('click', toggleLive);
-
-  document.querySelectorAll('#enable-seg button').forEach((b) => {
-    b.addEventListener('click', () => { cfg.enable = b.dataset.v; commit(); renderHeader(); });
-  });
-
-  $('#counter-add').addEventListener('click', () => {
-    const p = preset();
-    const fresh = { name: '', file: '', format: '{0}', increment: 1, count: 0, error: null };
-    openCounterDialog(fresh, (d) => { p.counters.push(d); p.selected_counter = p.counters.length - 1; commit(); renderCounters(); });
-  });
 
   $('#sound-add').addEventListener('click', () => {
     const p = preset();
@@ -883,13 +751,12 @@ function wire() {
     }
   }).observe(document.body, { childList: true, subtree: true });
 
-  window.addEventListener('resize', placeThumb);
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(placeThumb);
 }
 
 /* ---------- new version notice (installed app only) ---------- */
-// No auto-install and no signing key: we ask GitHub for the newest Release and, if it is
-// newer than this build, show a bar with a Download button (opens the Release page).
+// No signing key: we ask GitHub for the newest Release. If it is newer than this build, the bar
+// offers Update: Rust downloads the setup (SHA-256 checked), starts it and quits. If the Release
+// has no setup file, the button opens the Release page instead.
 
 const REPO_API = 'https://api.github.com/repos/same-09/RustBoard/releases/latest';
 
@@ -916,9 +783,40 @@ async function checkForUpdate() {
     const rel = await res.json();
     if (!rel.tag_name || !isNewer(rel.tag_name, current)) return;
 
-    $('#update-text').textContent = `New version ${rel.tag_name} is available (you have ${current}).`;
-    $('#update-btn').onclick = () => call('open_url', { url: rel.html_url }).catch((e) => toast(e, true));
-    $('#update-later').onclick = () => { $('#update-bar').hidden = true; };
+    const text = $('#update-text');
+    const btn = $('#update-btn');
+    const later = $('#update-later');
+    const asset = (rel.assets || []).find((x) => /-setup\.exe$/i.test(x.name));
+    text.textContent = `New version ${rel.tag_name} is available (you have ${current}).`;
+    later.onclick = () => { $('#update-bar').hidden = true; };
+
+    if (!asset) {
+      btn.textContent = 'Download';
+      btn.onclick = () => call('open_url', { url: rel.html_url }).catch((e) => toast(e, true));
+    } else {
+      btn.textContent = 'Update';
+      btn.onclick = async () => {
+        btn.disabled = later.disabled = true;
+        text.textContent = 'Starting download…';
+        const un1 = await listen('update-progress', ({ done, total }) => {
+          const mb = (n) => (n / 1048576).toFixed(1);
+          text.textContent = total ? `Downloading ${rel.tag_name}… ${Math.round((done / total) * 100)}% (${mb(done)} / ${mb(total)} MB)` : `Downloading ${rel.tag_name}… ${mb(done)} MB`;
+        });
+        const un2 = await listen('update-error', (msg) => {
+          un1(); un2();
+          text.textContent = String(msg);
+          btn.textContent = 'Try again';
+          btn.disabled = later.disabled = false;
+        });
+        try {
+          await call('install_update', { url: asset.browser_download_url, digest: asset.digest || null });
+        } catch (e) {
+          un1(); un2();
+          text.textContent = String(e);
+          btn.disabled = later.disabled = false;
+        }
+      };
+    }
     $('#update-bar').hidden = false;
   } catch (e) {
     console.warn('update check failed', e);
@@ -932,7 +830,7 @@ async function init() {
   render();
   renderLive();
 
-  // hotkeys change counters / selection in Rust, then tell us
+  // hotkeys change the selection in Rust, then tell us
   listen('config-changed', (c) => { cfg = c; render(); });
   listen('audio-error', (msg) => toast(msg, true));
 

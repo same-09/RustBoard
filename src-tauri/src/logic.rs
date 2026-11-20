@@ -1,8 +1,7 @@
-//! Shortcut logic. Port of ShortcutManager + counter commands from ViewModel.
+//! Shortcut logic. Port of ShortcutManager from ViewModel.
 
 use crate::audio::AudioCmd;
 use crate::config::Config;
-use crate::counter;
 use crate::state::AppState;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager};
@@ -22,45 +21,6 @@ fn resolve(key: &str, pressed: &[String], items: &[&[String]]) -> Option<usize> 
     best.map(|(i, _)| i)
 }
 
-#[derive(Clone, Copy)]
-enum CounterAction {
-    Next,
-    Previous,
-    Increment,
-    Decrement,
-    Reset,
-}
-
-fn apply_counter(cfg: &mut Config, action: CounterAction) {
-    let p = &mut cfg.presets[cfg.selected_preset];
-    let n = p.counters.len();
-    if n == 0 {
-        return;
-    }
-    if p.selected_counter >= n {
-        p.selected_counter = 0;
-    }
-    match action {
-        CounterAction::Next => p.selected_counter = (p.selected_counter + 1) % n,
-        CounterAction::Previous => p.selected_counter = (p.selected_counter + n - 1) % n,
-        CounterAction::Increment => {
-            let c = &mut p.counters[p.selected_counter];
-            c.count = c.count.saturating_add(c.increment);
-            counter::write_to_file(c);
-        }
-        CounterAction::Decrement => {
-            let c = &mut p.counters[p.selected_counter];
-            c.count = c.count.saturating_sub(c.increment);
-            counter::write_to_file(c);
-        }
-        CounterAction::Reset => {
-            let c = &mut p.counters[p.selected_counter];
-            c.count = 0;
-            counter::write_to_file(c);
-        }
-    }
-}
-
 /// Called on every key-down (also on auto-repeat). `first` is true for the first down only.
 pub fn on_key_down(app: &AppHandle, key: &str, pressed: &[String], first: bool) {
     let state = app.state::<AppState>();
@@ -75,70 +35,35 @@ pub fn on_key_down(app: &AppHandle, key: &str, pressed: &[String], first: bool) 
             Ok(g) => g,
             Err(_) => return,
         };
-        let enable = cfg.enable;
-
-        // counter shortcuts (repeat allowed, so holding + keeps counting)
-        if enable.counters_on() {
-            let hit = {
-                let cs = &cfg.counter_shortcuts;
-                resolve(
-                    key,
-                    pressed,
-                    &[
-                        &cs.next.keys[..],
-                        &cs.previous.keys[..],
-                        &cs.increment.keys[..],
-                        &cs.decrement.keys[..],
-                        &cs.reset.keys[..],
-                    ],
-                )
-            };
-            let action = hit.map(|i| match i {
-                0 => CounterAction::Next,
-                1 => CounterAction::Previous,
-                2 => CounterAction::Increment,
-                3 => CounterAction::Decrement,
-                _ => CounterAction::Reset,
-            });
-            if let Some(a) = action {
-                apply_counter(&mut cfg, a);
-                changed = true;
-            }
-        }
-
         // sound control shortcuts
-        if enable.sounds_on() {
-            let hit = {
-                let ss = &cfg.sound_shortcuts;
-                resolve(key, pressed, &[&ss.pause.keys[..], &ss.resume.keys[..], &ss.stop.keys[..]])
-            };
-            match hit {
-                Some(0) => state.send(AudioCmd::Pause),
-                Some(1) => state.send(AudioCmd::Resume),
-                Some(2) => state.send(AudioCmd::Stop),
-                _ => {}
-            }
+        let hit = {
+            let ss = &cfg.sound_shortcuts;
+            resolve(key, pressed, &[&ss.pause.keys[..], &ss.resume.keys[..], &ss.stop.keys[..]])
+        };
+        match hit {
+            Some(0) => state.send(AudioCmd::Pause),
+            Some(1) => state.send(AudioCmd::Resume),
+            Some(2) => state.send(AudioCmd::Stop),
+            _ => {}
         }
 
         // play sound + switch preset only on first press (no auto-repeat)
         if first {
-            if enable.sounds_on() {
-                let empty: &[String] = &[];
-                let hit = {
-                    let p = &cfg.presets[cfg.selected_preset];
-                    let list: Vec<&[String]> = p
-                        .sounds
-                        .iter()
-                        .map(|s| if s.files.is_empty() { empty } else { &s.keys[..] })
-                        .collect();
-                    resolve(key, pressed, &list)
-                };
-                if let Some(i) = hit {
-                    let sound = cfg.presets[cfg.selected_preset].sounds[i].clone();
-                    cfg.preset_mut_selected().selected_sound = i;
-                    state.play(&sound);
-                    changed = true;
-                }
+            let empty: &[String] = &[];
+            let hit = {
+                let p = &cfg.presets[cfg.selected_preset];
+                let list: Vec<&[String]> = p
+                    .sounds
+                    .iter()
+                    .map(|s| if s.files.is_empty() { empty } else { &s.keys[..] })
+                    .collect();
+                resolve(key, pressed, &list)
+            };
+            if let Some(i) = hit {
+                let sound = cfg.presets[cfg.selected_preset].sounds[i].clone();
+                cfg.preset_mut_selected().selected_sound = i;
+                state.play(&sound);
+                changed = true;
             }
 
             let hit = {
@@ -147,9 +72,6 @@ pub fn on_key_down(app: &AppHandle, key: &str, pressed: &[String], first: bool) 
             };
             if let Some(i) = hit {
                 cfg.selected_preset = i;
-                for c in cfg.presets[i].counters.iter_mut() {
-                    counter::read_from_file(c);
-                }
                 changed = true;
             }
         }
