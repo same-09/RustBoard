@@ -37,7 +37,15 @@ const ICONS = {
   loop: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
   reset: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  chev: '<path d="M6 9l6 6 6-6"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+  bars: '<path d="M4 10v4M8 6v12M12 3v18M16 8v8M20 11v2"/>',
+  hash: '<path d="M5 9h14M5 15h14M10 4L8 20M16 4l-2 16"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
 };
+
+// a solid triangle for the cover hover (the stroke play icon is too thin at 16px)
+const SOLID_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l11-6.5a1 1 0 0 0 0-1.72l-11-6.5A1 1 0 0 0 8 5.5z"/></svg>';
 
 function icon(name) {
   const t = document.createElement('span');
@@ -161,37 +169,54 @@ function bump(c, dir) {
   renderCounters();
 }
 
+function emptyState(kind, title, text, label, fn) {
+  const isSound = kind === 'sound';
+  return h('div', { class: 'empty' },
+    h('div', { class: 'cover big', style: `--h:${isSound ? 250 : 170}` }, icon(isSound ? 'bars' : 'hash')),
+    h('div', { class: 't' }, title),
+    h('div', { class: 'd' }, text),
+    h('button', { class: 'primary', onclick: fn }, icon('plus'), label));
+}
+
 function renderCounters() {
   const p = preset();
   const list = $('#counter-list');
+  $('#counter-count').textContent = p.counters.length || '';
   list.replaceChildren();
   if (!p.counters.length) {
-    list.append(h('div', { class: 'empty' }, 'No counters yet. Press + to add one.'));
+    list.append(emptyState('counter', 'No counters', 'Count deaths, kills or wins into a text file your stream can read.', 'Add counter', () => $('#counter-add').click()));
     return;
   }
   p.counters.forEach((c, i) => {
+    const sel = i === p.selected_counter;
     const shown = formatCount(c.format, c.count);
+    const text = shown == null ? c.count : shown;
     list.append(
       h('div', {
-        class: 'row counter' + (i === p.selected_counter ? ' selected' : ''),
+        class: 'counter' + (sel ? ' selected' : ''),
         onclick: () => { p.selected_counter = i; commit(); renderCounters(); },
       },
-        h('div', { class: 'main' },
-          h('div', { class: 'name' }, c.name || '(no name)'),
-          h('div', { class: 'sub' }, `${c.file ? basename(c.file) : 'no file'} · step ${c.increment}`),
-          c.error ? h('div', { class: 'err' }, c.error) : null),
-        h('div', { class: 'value' }, shown == null ? c.count : shown),
-        h('div', { class: 'acts' },
-          iconBtn('minus', 'Decrement', () => bump(c, -1)),
-          iconBtn('plus', 'Increment', () => bump(c, +1)),
-          iconBtn('reset', 'Reset to 0', () => { c.count = 0; commit(); renderCounters(); }),
-          iconBtn('edit', 'Edit', () => openCounterDialog(clone(c), (d) => { p.counters[i] = d; commit(); renderCounters(); })),
-          iconBtn('trash', 'Remove', () => {
-            p.counters.splice(i, 1);
-            p.selected_counter = Math.max(0, Math.min(p.selected_counter, p.counters.length - 1));
-            commit();
-            renderCounters();
-          }, 'danger'))));
+        h('div', { class: 'c-top' },
+          h('div', { class: 'main' },
+            h('div', { class: 'name' },
+              sel ? h('i', { class: 'dot', title: 'Counter hotkeys act on this one' }) : null,
+              c.name || '(no name)'),
+            h('div', { class: 'sub' }, `${c.file ? basename(c.file) : 'no file'} · step ${c.increment}`),
+            c.error ? h('div', { class: 'err' }, c.error) : null),
+          h('div', { class: 'value', title: String(text) }, text)),
+        h('div', { class: 'c-bot' },
+          iconBtn('minus', 'Decrement', () => bump(c, -1), 'fill big'),
+          iconBtn('plus', 'Increment', () => bump(c, +1), 'fill big'),
+          h('span', { class: 'grow' }),
+          h('div', { class: 'acts' },
+            iconBtn('reset', 'Reset to 0', () => { c.count = 0; commit(); renderCounters(); }),
+            iconBtn('edit', 'Edit', () => openCounterDialog(clone(c), (d) => { p.counters[i] = d; commit(); renderCounters(); })),
+            iconBtn('trash', 'Remove', () => {
+              p.counters.splice(i, 1);
+              p.selected_counter = Math.max(0, Math.min(p.selected_counter, p.counters.length - 1));
+              commit();
+              renderCounters();
+            }, 'danger')))));
   });
 }
 
@@ -243,29 +268,64 @@ function keysBox(keys) {
     keys.length ? keys.map((k) => h('span', { class: 'kbd' }, prettyKey(k))) : h('span', { class: 'muted' }, 'no keys'));
 }
 
+const hueOf = (name) => [...String(name)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % 360;
+
+// the selected sound tints the backdrop, like the cover does in Liner
+function setAmbient(sound) {
+  const hue = sound ? hueOf(sound.name || (sound.files[0] || 'sound')) : 232;
+  const root = document.documentElement;
+  if (root.style.getPropertyValue('--hue') === String(hue)) return;
+  root.style.setProperty('--hue', hue);
+  const amb = $('#ambient');
+  amb.classList.remove('swap');
+  void amb.offsetWidth;
+  amb.classList.add('swap');
+}
+
+function soundCover(name, onPlay) {
+  const t = document.createElement('span');
+  t.innerHTML = SOLID_PLAY;
+  const go = h('span', { class: 'go' }, t.firstChild);
+  return h('div', {
+    class: 'cover',
+    style: `--h:${hueOf(name)}`,
+    title: 'Play',
+    onclick: (e) => { e.stopPropagation(); onPlay(); },
+  }, icon('bars'), go);
+}
+
 function renderSounds() {
   const p = preset();
   const list = $('#sound-list');
+  $('#sound-count').textContent = p.sounds.length || '';
   list.replaceChildren();
+  setAmbient(p.sounds[p.selected_sound]);
   if (!p.sounds.length) {
-    list.append(h('div', { class: 'empty' }, 'No sounds yet. Press + to add one.'));
+    list.append(emptyState('sound', 'No sounds yet', 'Add a sound file and give it a key. Press the key anywhere and it plays.', 'Add sound', () => $('#sound-add').click()));
     return;
   }
+  const select = (i) => {
+    p.selected_sound = i;
+    commit();
+    list.querySelectorAll('.sound').forEach((el, idx) => el.classList.toggle('selected', idx === i));
+    setAmbient(p.sounds[i]);
+  };
   p.sounds.forEach((s, i) => {
+    const n = s.files.length;
     list.append(
       h('div', {
-        class: 'row' + (i === p.selected_sound ? ' selected' : ''),
-        onclick: () => { p.selected_sound = i; commit(); renderSounds(); },
+        class: 'sound' + (i === p.selected_sound ? ' selected' : ''),
+        onclick: () => select(i),
         ondblclick: () => playSound(i),
       },
+        soundCover(s.name || s.files[0] || 'sound', () => { select(i); playSound(i); }),
         h('div', { class: 'main' },
           h('div', { class: 'name' }, s.name || '(no name)'),
-          h('div', { class: 'sub' }, keysBox(s.keys), ' ', h('span', { class: 'muted' }, `${s.files.length} file${s.files.length === 1 ? '' : 's'}`)),
+          h('div', { class: 'sub' }, keysBox(s.keys), h('span', {}, `${n} file${n === 1 ? '' : 's'}`)),
           s.error ? h('div', { class: 'err' }, s.error) : null),
-        s.loop ? h('span', { class: 'badge', title: 'Loop' }, 'loop') : null,
-        h('span', { class: 'badge' + (s.error ? ' warn' : '') }, `${s.volume}%`),
+        s.loop ? h('span', { class: 'tag', title: 'Loops until stopped' }, icon('loop')) : null,
+        h('span', { class: 'vol-pct' + (s.error ? ' warn' : '') }, `${s.volume}%`),
         h('div', { class: 'acts' },
-          iconBtn('play', 'Play', () => playSound(i)),
           iconBtn('edit', 'Edit', () => openSoundDialog(clone(s), (d) => { p.sounds[i] = d; commit(); renderSounds(); })),
           iconBtn('trash', 'Remove', () => {
             p.sounds.splice(i, 1);
@@ -275,6 +335,11 @@ function renderSounds() {
           }, 'danger'))));
   });
 }
+
+const switchRow = (title, desc, input) =>
+  h('div', { class: 'switch-row' },
+    h('div', { class: 'txt' }, h('div', { class: 't' }, title), desc ? h('div', { class: 'd' }, desc) : null),
+    input);
 
 function keysField(label, getKeys, setKeys) {
   const box = h('span', { class: 'keys' });
@@ -326,9 +391,8 @@ function openSoundDialog(d, onSave) {
     keysField('Keys', () => d.keys, (k) => { d.keys = k; }),
     h('div', { class: 'field' }, h('span', { class: 'label' }, 'Volume'),
       h('div', { class: 'inline' }, vol, volLabel)),
-    h('label', { class: 'check' },
-      h('input', { type: 'checkbox', checked: d.loop, onchange: (e) => { d.loop = e.target.checked; } }),
-      'Loop'),
+    switchRow('Loop', 'Play again and again until you stop it',
+      h('input', { type: 'checkbox', checked: d.loop, onchange: (e) => { d.loop = e.target.checked; } })),
   ];
   openDialog({
     title: d.name ? 'Edit sound' : 'New sound',
@@ -350,19 +414,37 @@ function openSoundDialog(d, onSave) {
 /* ---------- presets ---------- */
 
 function renderHeader() {
-  const sel = $('#preset-select');
-  sel.replaceChildren(...cfg.presets.map((p, i) => h('option', { value: String(i) }, p.name || '(no name)')));
-  sel.value = String(cfg.selected_preset);
+  $('#preset-name').textContent = preset().name || '(no name)';
 
   document.querySelectorAll('#enable-seg button').forEach((b) => {
     b.classList.toggle('on', b.dataset.v === cfg.enable);
   });
   $('#counters-panel').classList.toggle('off', cfg.enable === 'Sounds');
   $('#sounds-panel').classList.toggle('off', cfg.enable === 'Counters');
+  placeThumb();
 
   $('#master').value = cfg.volume;
+  paintRange($('#master'));
   setIcon($('#mute'), cfg.volume === 0 ? 'mute' : 'vol');
   $('#mute').title = cfg.volume === 0 ? 'Unmute' : 'Mute';
+}
+
+// sliding pill behind the active tab
+function placeThumb() {
+  const seg = $('#enable-seg');
+  const on = seg.querySelector('button.on');
+  const thumb = seg.querySelector('.thumb');
+  if (!on || !on.offsetWidth) return;
+  thumb.style.width = on.offsetWidth + 'px';
+  thumb.style.transform = `translateX(${on.offsetLeft}px)`;
+  if (!seg.classList.contains('ready')) requestAnimationFrame(() => seg.classList.add('ready'));
+}
+
+// slider fill follows the value
+function paintRange(r) {
+  const min = Number(r.min) || 0;
+  const max = Number(r.max) || 100;
+  r.style.setProperty('--p', `${((r.value - min) / (max - min || 1)) * 100}%`);
 }
 
 function openPresetDialog(d, onSave, isNew) {
@@ -434,11 +516,70 @@ function deletePreset() {
   });
 }
 
+/* ---------- preset menu ---------- */
+
+let menuEl = null;
+
+function closeMenu() {
+  if (!menuEl) return;
+  menuEl.remove();
+  menuEl = null;
+  document.removeEventListener('pointerdown', onMenuOutside, true);
+  window.removeEventListener('keydown', onMenuKey, true);
+  window.removeEventListener('blur', closeMenu);
+}
+function onMenuOutside(e) {
+  if (menuEl && !menuEl.contains(e.target) && !e.target.closest('#preset-btn')) closeMenu();
+}
+function onMenuKey(e) {
+  if (e.key === 'Escape') { e.stopPropagation(); closeMenu(); }
+}
+
+function openPresetMenu() {
+  if (menuEl) { closeMenu(); return; }
+  const btn = $('#preset-btn');
+
+  const pick = (i) => h('button', {
+    class: 'menu-item',
+    onclick: () => { closeMenu(); if (i !== cfg.selected_preset) selectPreset(i); },
+  },
+    h('span', { class: 'slot' }, i === cfg.selected_preset ? icon('check') : null),
+    h('span', { class: 'grow' }, cfg.presets[i].name || '(no name)'),
+    cfg.presets[i].keys.length ? h('span', { class: 'side' }, cfg.presets[i].keys.map(prettyKey).join(' + ')) : null);
+
+  const act = (ic, label, fn, extra = '') => h('button', {
+    class: 'menu-item ' + extra,
+    onclick: () => { closeMenu(); fn(); },
+  }, h('span', { class: 'slot' }, icon(ic)), h('span', { class: 'grow' }, label));
+
+  menuEl = h('div', { class: 'menu', role: 'menu' },
+    cfg.presets.map((_, i) => pick(i)),
+    h('div', { class: 'menu-sep' }),
+    act('plus', 'New preset', addPreset),
+    act('copy', 'Duplicate', clonePreset),
+    act('edit', 'Rename and keys', () => {
+      const i = cfg.selected_preset;
+      openPresetDialog(clone(cfg.presets[i]), (d) => { cfg.presets[i] = d; commit(); render(); }, false);
+    }),
+    act('trash', 'Delete', deletePreset, 'danger'));
+
+  document.body.append(menuEl);
+  const r = btn.getBoundingClientRect();
+  menuEl.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - menuEl.offsetWidth - 8))}px`;
+  menuEl.style.top = `${r.bottom + 6}px`;
+  menuEl.style.maxHeight = `${window.innerHeight - r.bottom - 14}px`;
+
+  document.addEventListener('pointerdown', onMenuOutside, true);
+  window.addEventListener('keydown', onMenuKey, true);
+  window.addEventListener('blur', closeMenu);
+}
+
 /* ---------- dialogs ---------- */
 
 const dlg = $('#dlg');
 
-function openDialog({ title, body, buttons }) {
+function openDialog({ title, body, buttons, wide = false }) {
+  dlg.classList.toggle('wide', wide);
   $('#dlg-title').textContent = title;
   $('#dlg-body').replaceChildren(...[].concat(body));
   const foot = $('#dlg-foot');
@@ -456,6 +597,7 @@ function openDialog({ title, body, buttons }) {
     }, b.label));
   }
   if (!dlg.open) dlg.showModal();
+  $('#dlg-body').scrollTop = 0;
 }
 
 /* ---------- key binding ---------- */
@@ -527,7 +669,7 @@ let live = false;
 function renderLive() {
   const b = $('#go-live');
   b.classList.toggle('on', live);
-  b.textContent = live ? 'LIVE' : 'Go Live';
+  $('#live-label').textContent = live ? 'Live' : 'Go Live';
   b.title = live ? 'Live: Discord hears your sounds and your mic. Click to stop.'
     : 'Send your sounds and your mic to Discord through the virtual cable (VB-CABLE)';
 }
@@ -596,19 +738,28 @@ async function openSettings() {
     return h('div', { class: 'inline' }, r, label);
   };
 
-  const dev = (label, selKey, names, volKey) =>
-    h('div', { class: 'field' }, h('label', {}, label),
+  const section = (label, ...rows) =>
+    h('section', { class: 'set-section' }, h('h4', {}, label), h('div', { class: 'set-card' }, rows));
+
+  const row = (title, desc, control) =>
+    h('div', { class: 'set-row' },
+      h('div', { class: 'txt' }, h('div', { class: 't' }, title), desc ? h('div', { class: 'd' }, desc) : null),
+      control ? h('div', { class: 'ctl' }, control) : null);
+
+  const device = (title, selKey, names, volKey) =>
+    h('div', { class: 'set-row col' },
+      h('div', { class: 'txt' }, h('div', { class: 't' }, title)),
       h('div', { class: 'dev-row' }, select(selKey, names), range(volKey)));
 
   const shortcut = (label, sc) => {
     const box = h('span', {});
     const paint = () => box.replaceChildren(keysBox(sc.keys));
     paint();
-    return h('div', { class: 'sc-row' },
-      h('span', {}, label),
+    return row(label, null, [
       box,
       h('button', { onclick: () => bindKeys((k) => { sc.keys = k; paint(); commit(); }) }, 'Bind'),
-      h('button', { onclick: () => { sc.keys = []; paint(); commit(); } }, 'Clear'));
+      h('button', { onclick: () => { sc.keys = []; paint(); commit(); } }, 'Clear'),
+    ]);
   };
 
   const cs = cfg.counter_shortcuts;
@@ -617,50 +768,49 @@ async function openSettings() {
   const cable = devices.cable;
   const liveChoices = [AUTO_CABLE, ...devices.outputs.filter((n) => n !== 'Disabled' && n !== 'Default Output Device')];
 
+  const copy = (text) => navigator.clipboard.writeText(text).then(() => toast('Copied.'), () => toast(text));
+
   const body = [
-    h('div', { class: 'sect' }, 'Discord (VB-Cable)'),
-    h('div', { class: `cable-status ${cable ? 'ok' : 'bad'}` },
-      cable ? `Virtual cable found: ${cable}` : 'No virtual cable found.'),
-    cable
-      ? h('div', { class: 'hint' },
-        `Press Go Live: your sounds and your mic both go to the cable. In Discord open Settings > Voice & Video, `
-        + `set Input Device to "${discordMic(cable)}" and turn off Noise Suppression.`)
-      : h('div', { class: 'hint' },
-        `Install VB-CABLE (free) from ${CABLE_URL}, restart Windows, then open Settings again. `,
-        h('button', {
-          onclick: () => call('open_url', { url: CABLE_URL }).catch(
-            () => navigator.clipboard.writeText(CABLE_URL).then(() => toast('Link copied.'), () => toast(CABLE_URL))),
-        }, 'Open page')),
-    h('div', { class: 'field' }, h('label', {}, 'Go Live output'), select('live_output', liveChoices)),
+    section('Discord',
+      cable
+        ? row('Virtual cable', cable, h('span', { class: 'ok' }, 'Ready'))
+        : row('Virtual cable', 'Install VB-CABLE (free), restart Windows, then open Settings again.',
+          h('button', {
+            onclick: () => call('open_url', { url: CABLE_URL }).catch(() => copy(CABLE_URL)),
+          }, 'Get VB-CABLE')),
+      cable
+        ? row('Discord input device',
+          `In Discord open Voice & Video and pick "${discordMic(cable)}". Turn Noise Suppression off.`,
+          h('button', { onclick: () => copy(discordMic(cable)) }, icon('copy'), 'Copy name'))
+        : null,
+      row('Go Live output', 'Where your sounds and mic are sent.', select('live_output', liveChoices))),
 
-    h('div', { class: 'sect' }, 'Sound output'),
-    h('div', { class: 'field' }, h('label', {}, 'Master volume'), range('volume')),
-    dev('Primary output', 'primary_output', devices.outputs, 'primary_device_volume'),
-    dev('Secondary output', 'secondary_output', devices.outputs, 'secondary_device_volume'),
-    h('label', { class: 'check' },
-      h('input', { type: 'checkbox', checked: cfg.overlap, onchange: (e) => { cfg.overlap = e.target.checked; commit(); } }),
-      'Overlap sounds (do not stop the old sound when a new one starts)'),
+    section('Sound output',
+      row('Master volume', null, range('volume')),
+      device('Primary output', 'primary_output', devices.outputs, 'primary_device_volume'),
+      device('Secondary output', 'secondary_output', devices.outputs, 'secondary_device_volume'),
+      row('Overlap sounds', 'Do not stop the old sound when a new one starts.',
+        h('input', { type: 'checkbox', checked: cfg.overlap, onchange: (e) => { cfg.overlap = e.target.checked; commit(); } }))),
 
-    h('div', { class: 'sect' }, 'Microphone passthrough'),
-    h('div', { class: 'hint' }, 'Sends your mic to an output device (for example a virtual cable) so it travels with the soundboard. Go Live uses the Mic input below (the default mic if it is Disabled) and ignores Mic output.'),
-    h('div', { class: 'field' }, h('label', {}, 'Mic input'), select('mic_input', devices.inputs)),
-    h('div', { class: 'field' }, h('label', {}, 'Mic output'), select('mic_output', devices.outputs)),
-    h('div', { class: 'field' }, h('label', {}, 'Mic volume'), range('mic_volume')),
+    section('Microphone passthrough',
+      row('Mic input', 'Go Live uses this mic, or the default mic when it is Disabled.', select('mic_input', devices.inputs)),
+      row('Mic output', 'Send the mic to a device, for example a virtual cable. Go Live ignores this.', select('mic_output', devices.outputs)),
+      row('Mic volume', null, range('mic_volume'))),
 
-    h('div', { class: 'sect' }, 'Counter shortcuts'),
-    shortcut('Next counter', cs.next),
-    shortcut('Previous counter', cs.previous),
-    shortcut('Increment', cs.increment),
-    shortcut('Decrement', cs.decrement),
-    shortcut('Reset', cs.reset),
+    section('Counter shortcuts',
+      shortcut('Next counter', cs.next),
+      shortcut('Previous counter', cs.previous),
+      shortcut('Increment', cs.increment),
+      shortcut('Decrement', cs.decrement),
+      shortcut('Reset', cs.reset)),
 
-    h('div', { class: 'sect' }, 'Sound shortcuts'),
-    shortcut('Pause all', ss.pause),
-    shortcut('Continue', ss.continue),
-    shortcut('Stop all', ss.stop),
+    section('Sound shortcuts',
+      shortcut('Pause all', ss.pause),
+      shortcut('Continue', ss.continue),
+      shortcut('Stop all', ss.stop)),
   ];
 
-  openDialog({ title: 'Settings', body, buttons: [{ label: 'Close', primary: true }] });
+  openDialog({ title: 'Settings', body, wide: true, buttons: [{ label: 'Done', primary: true }] });
 }
 
 /* ---------- render + wiring ---------- */
@@ -672,25 +822,16 @@ function render() {
 }
 
 function wire() {
-  setIcon($('#preset-add'), 'plus');
-  setIcon($('#preset-clone'), 'copy');
-  setIcon($('#preset-edit'), 'edit');
-  setIcon($('#preset-del'), 'trash');
+  setIcon($('#preset-chev'), 'chev');
   setIcon($('#open-settings'), 'gear');
+  setIcon($('#live-ico'), 'mic');
   setIcon($('#counter-add'), 'plus');
-  setIcon($('#sound-add'), 'plus');
+  setIcon($('#add-ico'), 'plus');
   setIcon($('#sound-stop'), 'stop');
   setIcon($('#sound-pause'), 'pause');
-  setIcon($('#sound-play'), 'play');
+  setIcon($('#play-ico'), 'play');
 
-  $('#preset-select').addEventListener('change', (e) => selectPreset(Number(e.target.value)));
-  $('#preset-add').addEventListener('click', addPreset);
-  $('#preset-clone').addEventListener('click', clonePreset);
-  $('#preset-edit').addEventListener('click', () => {
-    const i = cfg.selected_preset;
-    openPresetDialog(clone(cfg.presets[i]), (d) => { cfg.presets[i] = d; commit(); render(); }, false);
-  });
-  $('#preset-del').addEventListener('click', deletePreset);
+  $('#preset-btn').addEventListener('click', openPresetMenu);
   $('#open-settings').addEventListener('click', openSettings);
   $('#go-live').addEventListener('click', toggleLive);
 
@@ -728,6 +869,22 @@ function wire() {
     renderHeader();
     commit();
   });
+
+  // slider fill: paint on input, and for every slider a dialog adds later
+  document.addEventListener('input', (e) => {
+    if (e.target.matches && e.target.matches('input[type="range"]')) paintRange(e.target);
+  }, true);
+  new MutationObserver((list) => {
+    for (const m of list) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType !== 1) continue;
+        (n.matches('input[type="range"]') ? [n] : [...n.querySelectorAll('input[type="range"]')]).forEach(paintRange);
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener('resize', placeThumb);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(placeThumb);
 }
 
 /* ---------- new version notice (installed app only) ---------- */
