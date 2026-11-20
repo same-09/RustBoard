@@ -62,6 +62,8 @@ pub struct LiveStatus {
     pub output: String,
     pub sounds: bool,
     pub mic: bool,
+    /// your own headphones (Primary output) are open, so you hear the sounds too
+    pub headphones: bool,
 }
 
 pub enum AudioCmd {
@@ -446,14 +448,7 @@ impl Engine {
         if secondary_changed {
             self.secondary = self.open_output(&route.secondary, false);
         }
-        let headroom = if self.live.is_some() { LIVE_SOUND_HEADROOM } else { 1.0 };
-        if let Some(o) = self.primary.as_mut() {
-            o.set_gain(s.volume * s.primary_volume);
-        }
-        if let Some(o) = self.secondary.as_mut() {
-            o.set_gain(s.volume * s.secondary_volume);
-            o.set_headroom(headroom);
-        }
+        self.update_gains();
 
         if mic_changed {
             self.mic = None; // drop old streams first
@@ -471,13 +466,50 @@ impl Engine {
         self.applied = Some(route);
     }
 
+    fn update_gains(&mut self) {
+        let s = match self.settings.clone() {
+            Some(s) => s,
+            None => return,
+        };
+        let headroom = if self.live.is_some() { LIVE_SOUND_HEADROOM } else { 1.0 };
+        if let Some(o) = self.primary.as_mut() {
+            o.set_gain(s.volume * s.primary_volume);
+        }
+        if let Some(o) = self.secondary.as_mut() {
+            o.set_gain(s.volume * s.secondary_volume);
+            o.set_headroom(headroom);
+        }
+    }
+
+    /// An output that failed to open earlier (busy, unplugged) gets another try when a sound
+    /// is played, so one bad moment at start-up does not leave it silent for good.
+    fn retry_missing_outputs(&mut self) {
+        let route = match &self.applied {
+            Some(r) => r.clone(),
+            None => return,
+        };
+        let mut reopened = false;
+        if self.primary.is_none() && route.primary != DISABLED {
+            self.primary = self.open_output(&route.primary, true);
+            reopened = true;
+        }
+        if self.secondary.is_none() && route.secondary != DISABLED {
+            self.secondary = self.open_output(&route.secondary, false);
+            reopened = true;
+        }
+        if reopened {
+            self.update_gains();
+        }
+    }
+
     /// Go Live: sounds and mic both go to the virtual cable. Turning it off puts the manual
     /// settings back. Safe to call twice.
     fn set_live(&mut self, on: bool) -> Result<LiveStatus, String> {
+        self.applied = None; // reopen every device fresh: no stale stream survives a switch
         if !on {
             self.live = None;
             self.apply();
-            return Ok(LiveStatus { on: false, output: String::new(), sounds: false, mic: false });
+            return Ok(LiveStatus { on: false, output: String::new(), sounds: false, mic: false, headphones: true });
         }
         let wanted = match self.settings.as_ref() {
             Some(s) => s.live_output.clone(),
@@ -494,14 +526,18 @@ impl Engine {
         })?;
         self.live = Some(cable.clone());
         self.apply();
+        let headphones = self.primary.is_some()
+            || self.settings.as_ref().map(|s| s.primary_output == DISABLED).unwrap_or(true);
         let status = LiveStatus {
             on: true,
             output: cable.clone(),
             sounds: self.secondary.is_some(),
             mic: self.mic.is_some(),
+            headphones,
         };
         if !status.sounds && !status.mic {
             self.live = None; // nothing opened: do not pretend to be live
+            self.applied = None;
             self.apply();
             return Err(format!("Could not open '{}'. Is another app using it exclusively?", cable));
         }
@@ -522,6 +558,7 @@ impl Engine {
     }
 
     fn play(&mut self, file: &str, volume: f32, looped: bool) {
+        self.retry_missing_outputs();
         let overlap = self.settings.as_ref().map(|s| s.overlap).unwrap_or(false);
         let mut errors = Vec::new();
         for out in [self.primary.as_mut(), self.secondary.as_mut()].into_iter().flatten() {

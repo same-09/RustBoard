@@ -150,7 +150,7 @@ def set_live(args):
     LIVE["on"] = bool(args.get("on"))
     print(f"[mock] live = {LIVE['on']}")
     return {"on": LIVE["on"], "output": "CABLE Input (Mock)" if LIVE["on"] else "",
-            "sounds": LIVE["on"], "mic": LIVE["on"]}
+            "sounds": LIVE["on"], "mic": LIVE["on"], "headphones": True}
 
 
 COMMANDS = {

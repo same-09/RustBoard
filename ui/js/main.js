@@ -546,6 +546,8 @@ async function toggleLive() {
     renderLive();
     if (!st.on) {
       toast('Live stopped.');
+    } else if (!st.headphones) {
+      toast('LIVE, but your headphones (Primary output) did not open, so you cannot hear the sounds. Pick another Primary output in Settings, then press Go Live twice.', true, 9000);
     } else if (st.sounds && st.mic) {
       toast(`LIVE: sounds + mic go to ${st.output}. In Discord set Input Device to "${discordMic(st.output)}".`, false, 7000);
     } else if (st.sounds) {
