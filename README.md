@@ -97,3 +97,9 @@ Config: `<app data>/com.rustboard.app/config.json`
 Settings > *Discord (VB-Cable)* shows whether a cable was found and lets you pick another device for Go Live
 (default: `Auto`, which prefers VB-CABLE, then other virtual cables). While live, sounds are 3 dB lower so
 sounds + mic do not clip on the cable.
+
+## Installer look
+
+The setup `.exe` is NSIS (made by Tauri). Its images are `src-tauri/installer/sidebar.bmp` (164x314) and `header.bmp` (150x57),
+set in `tauri.conf.json` > `bundle.windows.nsis`. The pages and buttons stay the Windows style; NSIS cannot draw HTML.
+The HTML mock in `installer-ui/` needs its own Tauri installer app to be used.
