@@ -8,7 +8,7 @@ use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -27,6 +27,11 @@ pub struct AudioSettings {
     pub mic_output: String,
     pub mic_volume: f32,
     pub live_output: String,
+    pub gate_on: bool,
+    /// gate opens above this mic level (linear RMS, 0..1)
+    pub gate_threshold: f32,
+    /// mic sound effect: 0 = off, else the preset index in `fx::IDS`
+    pub fx: u32,
 }
 
 impl AudioSettings {
@@ -42,6 +47,9 @@ impl AudioSettings {
             mic_output: c.mic_output.clone(),
             mic_volume: c.mic_volume as f32 / 100.0,
             live_output: c.live_output.clone(),
+            gate_on: c.gate_on,
+            gate_threshold: 10f32.powf(c.gate_threshold_db as f32 / 20.0),
+            fx: crate::fx::active_index(c.fx_on, &c.fx_preset),
         }
     }
 }
@@ -80,6 +88,127 @@ pub enum AudioCmd {
 /// Same curve as the old app: (100^v - 1) / 99
 fn curve(v: f32) -> f32 {
     (100f32.powf(v.clamp(0.0, 1.0)) - 1.0) / 99.0
+}
+
+// ---------- mic levels + noise gate ----------
+
+/// Mic level meters. The mic callback writes, the UI reads through `get_levels`.
+/// Values are the loudest block RMS since the last read. Positive f32 bit patterns sort
+/// like the numbers, so `fetch_max` on the bits keeps the maximum without a lock.
+#[derive(Default)]
+pub struct Levels {
+    input: AtomicU32,
+    output: AtomicU32,
+    active: AtomicBool,
+    gate_open: AtomicBool,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct LevelsOut {
+    /// mic level before the gate, dBFS (-100 = silence)
+    pub input_db: f32,
+    /// level that leaves toward Discord / the cable: after gate and mic volume
+    pub output_db: f32,
+    /// the mic is running
+    pub active: bool,
+    pub gate_open: bool,
+}
+
+fn to_db(v: f32) -> f32 {
+    if v <= 1e-5 {
+        -100.0
+    } else {
+        20.0 * v.log10()
+    }
+}
+
+impl Levels {
+    fn note(&self, input: f32, output: f32, gate_open: bool) {
+        if input.is_finite() {
+            self.input.fetch_max(input.to_bits(), Ordering::Relaxed);
+        }
+        if output.is_finite() {
+            self.output.fetch_max(output.to_bits(), Ordering::Relaxed);
+        }
+        self.gate_open.store(gate_open, Ordering::Relaxed);
+    }
+
+    /// Peak (of block RMS) since the last call, then start over.
+    pub fn take(&self) -> LevelsOut {
+        LevelsOut {
+            input_db: to_db(f32::from_bits(self.input.swap(0, Ordering::Relaxed))),
+            output_db: to_db(f32::from_bits(self.output.swap(0, Ordering::Relaxed))),
+            active: self.active.load(Ordering::Relaxed),
+            gate_open: self.gate_open.load(Ordering::Relaxed),
+        }
+    }
+}
+
+fn rms(block: &[f32]) -> f32 {
+    if block.is_empty() {
+        return 0.0;
+    }
+    (block.iter().map(|x| x * x).sum::<f32>() / block.len() as f32).sqrt()
+}
+
+/// Noise gate: mutes the mic between words so keyboard and fan noise do not reach Discord.
+/// Level is measured per block (about 10 ms). It opens fast (5 ms), stays open 200 ms after the
+/// last loud block (no chopped word endings), then fades out (80 ms). Once open it needs the level
+/// to fall 4 dB below the threshold before it counts as quiet, so it does not flutter.
+struct Gate {
+    g: f32,
+    open: bool,
+    hold_left: usize,
+    hold: usize,
+    attack: f32,
+    release: f32,
+}
+
+impl Gate {
+    fn new(sample_rate: u32) -> Self {
+        let sr = sample_rate.max(1) as f32;
+        Gate {
+            g: 0.0,
+            open: false,
+            hold_left: 0,
+            hold: (sr * 0.2) as usize,
+            attack: 1.0 - (-1.0 / (sr * 0.005)).exp(),
+            release: 1.0 - (-1.0 / (sr * 0.08)).exp(),
+        }
+    }
+
+    /// Gate switched off: pass everything, and be open when it is switched on again.
+    fn reset(&mut self) {
+        self.g = 1.0;
+        self.open = true;
+        self.hold_left = self.hold;
+    }
+
+    fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// `level` = RMS of `block`, `threshold` = linear RMS.
+    fn process(&mut self, block: &mut [f32], level: f32, threshold: f32) {
+        if block.is_empty() {
+            return;
+        }
+        let limit = if self.open { threshold * 0.63 } else { threshold };
+        if level >= limit {
+            self.open = true;
+            self.hold_left = self.hold;
+        } else if self.hold_left > 0 {
+            self.hold_left = self.hold_left.saturating_sub(block.len());
+        } else {
+            self.open = false;
+        }
+        let target = if self.open { 1.0 } else { 0.0 };
+        let k = if target > self.g { self.attack } else { self.release };
+        for x in block.iter_mut() {
+            self.g += (target - self.g) * k;
+            *x *= self.g;
+        }
+    }
 }
 
 // ---------- output ----------
@@ -209,10 +338,28 @@ struct Mic {
     _input: cpal::Stream,
     _output: cpal::Stream,
     volume: Arc<AtomicU32>,
+    gate_on: Arc<AtomicBool>,
+    gate_threshold: Arc<AtomicU32>,
+    fx: Arc<AtomicU32>,
+    levels: Arc<Levels>,
+}
+
+impl Drop for Mic {
+    fn drop(&mut self) {
+        self.levels.active.store(false, Ordering::Relaxed);
+    }
 }
 
 impl Mic {
-    fn start(input_name: &str, output_name: &str, volume: f32) -> Result<Mic, String> {
+    fn start(
+        input_name: &str,
+        output_name: &str,
+        volume: f32,
+        gate_on: bool,
+        gate_threshold: f32,
+        fx: u32,
+        levels: Arc<Levels>,
+    ) -> Result<Mic, String> {
         let host = cpal::default_host();
         let in_dev = find_input(&host, input_name).ok_or_else(|| format!("Mic '{}' not found.", input_name))?;
         let out_dev = find_output(&host, output_name)
@@ -237,17 +384,47 @@ impl Mic {
         let prime_samples = (in_rate as usize) * 40 / 1000;
         let buffer: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::with_capacity(max_samples)));
         let vol = Arc::new(AtomicU32::new(volume.to_bits()));
+        let gate_on = Arc::new(AtomicBool::new(gate_on));
+        let gate_threshold = Arc::new(AtomicU32::new(gate_threshold.to_bits()));
+        let fx = Arc::new(AtomicU32::new(fx));
 
         let in_buf = Arc::clone(&buffer);
+        let in_vol = Arc::clone(&vol);
+        let in_gate_on = Arc::clone(&gate_on);
+        let in_gate_thr = Arc::clone(&gate_threshold);
+        let in_fx = Arc::clone(&fx);
+        let in_levels = Arc::clone(&levels);
+        let mut gate = Gate::new(in_rate);
+        // effect chain: rebuilt only when the choice changes (the old chain is dropped then)
+        let mut fx_now: u32 = 0;
+        let mut fx_chain = crate::fx::build(0, in_rate);
+        let mut mono: Vec<f32> = Vec::with_capacity(4096);
         let input = in_dev
             .build_input_stream(
                 &in_conf,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    // mono mix first, outside the lock
+                    mono.clear();
+                    mono.extend(data.chunks(in_channels.max(1)).map(|f| f.iter().sum::<f32>() / f.len() as f32));
+                    let level_in = rms(&mono);
+                    if in_gate_on.load(Ordering::Relaxed) {
+                        gate.process(&mut mono, level_in, f32::from_bits(in_gate_thr.load(Ordering::Relaxed)));
+                    } else {
+                        gate.reset();
+                    }
+                    // sound effect after the gate, so noise is not "voice changed"
+                    let want = in_fx.load(Ordering::Relaxed);
+                    if want != fx_now {
+                        fx_now = want;
+                        fx_chain = crate::fx::build(want, in_rate);
+                    }
+                    if !fx_chain.is_empty() {
+                        fx_chain.process(&mut mono);
+                    }
+                    let v = f32::from_bits(in_vol.load(Ordering::Relaxed));
+                    in_levels.note(level_in, rms(&mono) * v, gate.is_open());
                     if let Ok(mut q) = in_buf.lock() {
-                        for frame in data.chunks(in_channels.max(1)) {
-                            let mono = frame.iter().sum::<f32>() / frame.len() as f32;
-                            q.push_back(mono);
-                        }
+                        q.extend(mono.iter().copied());
                         while q.len() > max_samples {
                             q.pop_front(); // drop oldest, keep latency low
                         }
@@ -296,16 +473,30 @@ impl Mic {
 
         output.play().map_err(|e| e.to_string())?;
         input.play().map_err(|e| e.to_string())?;
+        levels.active.store(true, Ordering::Relaxed);
 
         Ok(Mic {
             _input: input,
             _output: output,
             volume: vol,
+            gate_on,
+            gate_threshold,
+            fx,
+            levels,
         })
     }
 
     fn set_volume(&self, v: f32) {
         self.volume.store(v.to_bits(), Ordering::Relaxed);
+    }
+
+    fn set_fx(&self, fx: u32) {
+        self.fx.store(fx, Ordering::Relaxed);
+    }
+
+    fn set_gate(&self, on: bool, threshold: f32) {
+        self.gate_on.store(on, Ordering::Relaxed);
+        self.gate_threshold.store(threshold.to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -417,6 +608,7 @@ struct Engine {
     primary: Option<Output>,
     secondary: Option<Output>,
     mic: Option<Mic>,
+    levels: Arc<Levels>,
     on_error: Box<dyn Fn(String) + Send>,
 }
 
@@ -453,7 +645,15 @@ impl Engine {
         if mic_changed {
             self.mic = None; // drop old streams first
             if route.mic_in != DISABLED && route.mic_out != DISABLED {
-                match Mic::start(&route.mic_in, &route.mic_out, s.mic_volume) {
+                match Mic::start(
+                    &route.mic_in,
+                    &route.mic_out,
+                    s.mic_volume,
+                    s.gate_on,
+                    s.gate_threshold,
+                    s.fx,
+                    Arc::clone(&self.levels),
+                ) {
                     Ok(m) => self.mic = Some(m),
                     Err(e) => (self.on_error)(e),
                 }
@@ -461,6 +661,8 @@ impl Engine {
         }
         if let Some(m) = self.mic.as_ref() {
             m.set_volume(s.mic_volume);
+            m.set_gate(s.gate_on, s.gate_threshold);
+            m.set_fx(s.fx);
         }
 
         self.applied = Some(route);
@@ -578,8 +780,8 @@ impl Engine {
     }
 }
 
-/// Start the audio thread. Returns the command sender.
-pub fn spawn(on_error: impl Fn(String) + Send + 'static) -> Sender<AudioCmd> {
+/// Start the audio thread. Returns the command sender. `levels` is where the mic meters are written.
+pub fn spawn(levels: Arc<Levels>, on_error: impl Fn(String) + Send + 'static) -> Sender<AudioCmd> {
     let (tx, rx) = mpsc::channel::<AudioCmd>();
     thread::spawn(move || {
         let mut engine = Engine {
@@ -589,6 +791,7 @@ pub fn spawn(on_error: impl Fn(String) + Send + 'static) -> Sender<AudioCmd> {
             primary: None,
             secondary: None,
             mic: None,
+            levels,
             on_error: Box::new(on_error),
         };
         for cmd in rx {
@@ -658,6 +861,8 @@ mod tests {
             secondary_output: DISABLED.into(), secondary_volume: 1.0, overlap: false,
             mic_input: DISABLED.into(), mic_output: DISABLED.into(), mic_volume: 1.0,
             live_output: AUTO_CABLE.into(),
+            gate_on: false, gate_threshold: 0.003,
+            fx: 0,
         }
     }
 
@@ -729,5 +934,88 @@ mod tests {
         assert_eq!(r.next(&mut q), None);
         feed(&mut q, &[0.5, 0.5, 0.5]);
         assert_eq!(r.next(&mut q), Some(0.5));
+    }
+
+    // ----- noise gate -----
+
+    const SR: u32 = 48000;
+    const BLOCK: usize = 480; // 10 ms
+
+    fn run_gate(g: &mut Gate, amp: f32, blocks: usize, thr: f32) -> f32 {
+        let mut last = 0.0;
+        for _ in 0..blocks {
+            let mut b = vec![amp; BLOCK];
+            let lvl = rms(&b);
+            g.process(&mut b, lvl, thr);
+            last = *b.last().unwrap();
+        }
+        last
+    }
+
+    #[test]
+    fn gate_passes_loud_sound() {
+        let mut g = Gate::new(SR);
+        let out = run_gate(&mut g, 0.5, 10, 0.01);
+        assert!(out > 0.49, "got {out}");
+        assert!(g.is_open());
+    }
+
+    #[test]
+    fn gate_closes_on_quiet_noise_after_hold() {
+        let mut g = Gate::new(SR);
+        run_gate(&mut g, 0.5, 5, 0.01);
+        let out = run_gate(&mut g, 0.001, 100, 0.01); // 1 s of room noise
+        assert!(out.abs() < 0.001 * 0.01, "got {out}");
+        assert!(!g.is_open());
+    }
+
+    #[test]
+    fn gate_holds_open_right_after_speech() {
+        let mut g = Gate::new(SR);
+        run_gate(&mut g, 0.5, 5, 0.01);
+        let out = run_gate(&mut g, 0.001, 5, 0.01); // only 50 ms of quiet
+        assert!(out > 0.0009, "gate chopped the word end: {out}");
+        assert!(g.is_open());
+    }
+
+    #[test]
+    fn gate_hysteresis_keeps_it_open_just_under_threshold() {
+        let mut g = Gate::new(SR);
+        run_gate(&mut g, 0.5, 5, 0.01);
+        // level 0.007 is below 0.01 but above 0.01 * 0.63: still counts as speech
+        run_gate(&mut g, 0.007, 60, 0.01);
+        assert!(g.is_open());
+    }
+
+    #[test]
+    fn gate_reset_is_a_pass_through() {
+        let mut g = Gate::new(SR);
+        g.reset();
+        let mut b = vec![0.25; BLOCK];
+        let lvl = rms(&b);
+        g.process(&mut b, lvl, 0.5); // threshold far above the level, but hold keeps it open
+        assert!((b[0] - 0.25).abs() < 1e-6);
+    }
+
+    // ----- meters -----
+
+    #[test]
+    fn levels_keep_the_peak_until_read() {
+        let l = Levels::default();
+        l.note(0.1, 0.05, true);
+        l.note(0.5, 0.2, true);
+        l.note(0.2, 0.1, true);
+        let r = l.take();
+        assert!((r.input_db - to_db(0.5)).abs() < 0.01);
+        assert!((r.output_db - to_db(0.2)).abs() < 0.01);
+        let again = l.take();
+        assert_eq!(again.input_db, -100.0);
+    }
+
+    #[test]
+    fn db_of_silence_and_full_scale() {
+        assert_eq!(to_db(0.0), -100.0);
+        assert!(to_db(1.0).abs() < 1e-6);
+        assert!((to_db(0.1) + 20.0).abs() < 1e-4);
     }
 }

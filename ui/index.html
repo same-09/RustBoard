@@ -20,7 +20,11 @@
           <rect x="29" y="10" width="3" height="4" rx="1.5"/>
         </svg>
       </div>
-      <button class="rail-btn" id="open-settings" title="Settings" aria-label="Settings"></button>
+      <nav class="rail-tabs" id="tabs" role="tablist" aria-label="Pages" aria-orientation="vertical">
+        <button class="rail-tab" id="tab-settings" role="tab" data-view="settings" data-icon="gear"><span class="ico"></span><span class="lab">Settings</span></button>
+        <button class="rail-tab" id="tab-home" role="tab" data-view="home" data-icon="bars"><span class="ico"></span><span class="lab">Soundboard</span></button>
+        <button class="rail-tab" id="tab-fx" role="tab" data-view="fx" data-icon="mic"><span class="ico"></span><span class="lab">Sound Effects</span></button>
+      </nav>
     </aside>
 
     <div class="page">
@@ -69,6 +73,13 @@
         <section class="panel">
           <div class="panel-head"><h2>Settings</h2></div>
           <div class="set-scroll" id="settings-body"></div>
+        </section>
+      </main>
+
+      <main class="settings" id="fx-page" hidden>
+        <section class="panel">
+          <div class="panel-head"><h2>Sound Effects</h2></div>
+          <div class="set-scroll" id="fx-body"></div>
         </section>
       </main>
 

@@ -529,6 +529,18 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.15); backdrop-filter: blur(2px); 
 .ok { color: var(--ok); font-weight: 600; }
 .bad { color: var(--accent); font-weight: 600; }
 .set-row .ctl .muted { min-width: 34px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.set-row .ctl .muted.db { min-width: 48px; }
+
+/* mic level meters (Settings) */
+.meters { gap: 8px; }
+.meter { display: grid; grid-template-columns: 30px 1fr 48px; align-items: center; gap: 10px; }
+.m-lab { color: var(--text-tertiary); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; }
+.m-bar { position: relative; height: 8px; border-radius: 99px; background: var(--fill-strong); overflow: hidden; }
+.m-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 99px; background: var(--ok); transition: background 150ms ease; }
+.m-fill.shut { background: var(--text-tertiary); }
+.m-mark { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); }
+.m-mark[hidden] { display: none; }
+.m-db { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* key binding: the window edge breathes like Liner's drop zone */
 #bind { width: min(400px, calc(100vw - 32px)); }
@@ -678,3 +690,55 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.15); backdrop-filter: blur(2px); 
   stroke-linejoin: round;
   pointer-events: none;
 }
+
+/* ---------- tabs on the left rail: Settings | Soundboard | Sound Effects ---------- */
+.rail { width: 88px; padding: 16px 8px; }
+.rail-tabs { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.rail-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  height: auto;
+  min-height: 62px;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 13px;
+  text-align: center;
+}
+.rail-tab .ico svg { display: block; width: 22px; height: 22px; stroke-width: 1.7; }
+.rail-tab:hover { background: var(--fill-hover); color: var(--text-primary); }
+.rail-tab.active { background: var(--btn-bg); color: var(--btn-text); }
+
+/* ---------- Sound Effects page ---------- */
+.fx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; padding: 8px; }
+.fx-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  height: auto;
+  min-height: 74px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--r-item);
+  background: var(--fill-subtle);
+  text-align: left;
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--border-a14);
+}
+.fx-card:hover { background: var(--fill-hover); }
+.fx-card .t { font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
+.fx-card .d { font-size: 12px; line-height: 16px; color: var(--text-tertiary); font-weight: 400; }
+.fx-card.on { background: var(--btn-bg); color: var(--btn-text); box-shadow: none; }
+.fx-card.on .d { color: color-mix(in srgb, var(--btn-text) 70%, transparent); }
+.fx-grid.off { opacity: 0.5; }
+.fx-status { color: var(--text-tertiary); font-size: 12px; line-height: 17px; }
+.fx-status.warn { color: var(--accent); }

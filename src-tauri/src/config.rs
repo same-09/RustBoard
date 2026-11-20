@@ -9,9 +9,21 @@ pub const DISABLED: &str = "Disabled";
 pub const DEFAULT_OUT: &str = "Default Output Device";
 /// "Go Live" output: find the virtual cable (VB-CABLE) on its own.
 pub const AUTO_CABLE: &str = "Auto (VB-Cable)";
+pub const GATE_MIN_DB: i32 = -70;
+pub const GATE_MAX_DB: i32 = -20;
 
 fn d_100() -> u32 {
     100
+}
+fn d_true() -> bool {
+    true
+}
+/// Gate opens above this mic level (dBFS, RMS). Quiet room noise sits near -60.
+fn d_gate_db() -> i32 {
+    -50
+}
+fn d_fx_preset() -> String {
+    "clean".to_string()
 }
 fn d_primary() -> String {
     DEFAULT_OUT.to_string()
@@ -98,6 +110,21 @@ pub struct Config {
     pub secondary_device_volume: u32,
     #[serde(default = "d_100")]
     pub mic_volume: u32,
+    /// Noise gate on the mic: mutes it between words (keyboard, fan). Off by default.
+    #[serde(default)]
+    pub gate_on: bool,
+    /// Gate threshold in dBFS (RMS), `GATE_MIN_DB..=GATE_MAX_DB`.
+    #[serde(default = "d_gate_db")]
+    pub gate_threshold_db: i32,
+    /// Show the IN / OUT level meters in Settings.
+    #[serde(default = "d_true")]
+    pub meters_on: bool,
+    /// Mic sound effects (voice changer) on the mic passthrough. Off by default.
+    #[serde(default)]
+    pub fx_on: bool,
+    /// Which effect: an id from `fx::IDS` ("clean", "deep", "robot", ...).
+    #[serde(default = "d_fx_preset")]
+    pub fx_preset: String,
     #[serde(default)]
     pub overlap: bool,
     #[serde(default = "d_primary")]
@@ -126,6 +153,11 @@ impl Default for Config {
             primary_device_volume: 100,
             secondary_device_volume: 100,
             mic_volume: 100,
+            gate_on: false,
+            gate_threshold_db: d_gate_db(),
+            meters_on: true,
+            fx_on: false,
+            fx_preset: d_fx_preset(),
             overlap: false,
             primary_output: d_primary(),
             secondary_output: d_disabled(),
@@ -165,6 +197,10 @@ impl Config {
         self.primary_device_volume = self.primary_device_volume.min(100);
         self.secondary_device_volume = self.secondary_device_volume.min(100);
         self.mic_volume = self.mic_volume.min(100);
+        self.gate_threshold_db = self.gate_threshold_db.clamp(GATE_MIN_DB, GATE_MAX_DB);
+        if !crate::fx::is_known(&self.fx_preset) {
+            self.fx_preset = d_fx_preset();
+        }
     }
 }
 
@@ -197,4 +233,46 @@ pub fn save(path: &Path, cfg: &Config) -> Result<(), String> {
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, json).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_config_gets_gate_defaults() {
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(!c.gate_on);
+        assert_eq!(c.gate_threshold_db, -50);
+        assert!(c.meters_on);
+    }
+
+    #[test]
+    fn old_config_gets_effect_defaults() {
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(!c.fx_on);
+        assert_eq!(c.fx_preset, "clean");
+    }
+
+    #[test]
+    fn unknown_effect_falls_back_to_clean() {
+        let mut c = Config::default();
+        c.fx_preset = "does-not-exist".into();
+        c.normalize();
+        assert_eq!(c.fx_preset, "clean");
+        c.fx_preset = "robot".into();
+        c.normalize();
+        assert_eq!(c.fx_preset, "robot");
+    }
+
+    #[test]
+    fn gate_threshold_is_clamped() {
+        let mut c = Config::default();
+        c.gate_threshold_db = -300;
+        c.normalize();
+        assert_eq!(c.gate_threshold_db, GATE_MIN_DB);
+        c.gate_threshold_db = 5;
+        c.normalize();
+        assert_eq!(c.gate_threshold_db, GATE_MAX_DB);
+    }
 }

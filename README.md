@@ -65,13 +65,22 @@ Mock backend: no sound, no global hotkeys (keys are read from the page).
 src-tauri/src/
   main.rs      Tauri commands + setup
   config.rs    config model, load/save (config.json)
-  audio.rs     audio thread: 2 outputs, mixer, mic passthrough (+ resampler), Go Live, VB-Cable detection
+  audio.rs     audio thread: 2 outputs, mixer, mic passthrough (+ resampler, noise gate, level meters), Go Live, VB-Cable detection
+  fx.rs        mic sound effects (voice changer): pitch, echo, reverb, robot... (port of Voicefork)
   hotkeys.rs   global key hook (rdev)
   logic.rs     shortcut matching, preset switch
   state.rs     shared app state
 ui/            index.html, style.css, js/{main,api,keys}.js
 tools/         convert_config.py, dev_server.py
 ```
+
+## Tabs
+
+The left bar has three tabs: **Settings**, **Soundboard** and **Sound Effects**.
+Sound Effects is a voice changer for the mic passthrough (11 effects: Clean, Deep, Chipmunk, Demon, Giant,
+Robot, Alien, Radio, Megaphone, Cave, 8-bit). It runs after the noise gate and before the mic volume, so it
+works with Go Live and with a Mic input + Mic output pair. Config keys: `fx_on`, `fx_preset`.
+Pitch effects add about 20-30 ms of delay.
 
 ## Differences from the C# app
 
@@ -85,6 +94,18 @@ tools/         convert_config.py, dev_server.py
 
 Config: `<app data>/com.rustboard.app/config.json`
 (Windows `%APPDATA%`, Linux `~/.local/share`, macOS `~/Library/Application Support`).
+
+## Noise gate and level meters
+
+Settings > *Noise gate & meters* (two separate switches):
+
+- **Noise gate** (off by default): mutes your mic between words, so keys and fans do not reach Discord.
+  The **threshold** slider (-70 to -20 dB, default -50) is the level your voice must pass to open it.
+  It opens in 5 ms, stays open 200 ms after you stop (no chopped word endings) and fades out in 80 ms.
+- **Level meters** (on by default): **IN** is the mic before the gate, **OUT** is what goes to the cable or
+  mic output (after gate and Mic volume). A red line on IN marks the threshold. Set the gate by watching IN:
+  put the threshold between your room noise and your voice. The meters only run while Settings is open.
+- Both need the mic running: a Mic input and Mic output in Settings, or **Go Live**.
 
 ## Go Live: sounds + your voice in Discord (VB-CABLE)
 

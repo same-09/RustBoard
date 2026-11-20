@@ -3,17 +3,19 @@
 
 mod audio;
 mod config;
+mod fx;
 mod hotkeys;
 mod links;
 mod logic;
 mod state;
 mod updater;
 
-use audio::{AudioCmd, AudioSettings, Devices, LiveStatus};
+use audio::{AudioCmd, AudioSettings, Devices, Levels, LevelsOut, LiveStatus};
 use config::Config;
 use state::AppState;
 use std::path::Path;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -123,6 +125,13 @@ fn set_live(state: State<'_, AppState>, on: bool) -> Result<LiveStatus, String> 
     rx.recv_timeout(Duration::from_secs(8)).map_err(|e| e.to_string())?
 }
 
+/// Mic level meters (IN before the gate, OUT after gate + mic volume), loudest since the last call.
+/// The UI asks about 12 times a second, and only while the Settings meters are visible.
+#[tauri::command]
+fn get_levels(state: State<'_, AppState>) -> LevelsOut {
+    state.levels.take()
+}
+
 /// Version of this build (the release workflow sets it from the git tag).
 #[tauri::command]
 fn app_version() -> String {
@@ -175,7 +184,8 @@ fn main() {
 
             // audio thread reports errors to the UI as "audio-error" events
             let handle = app.handle().clone();
-            let tx = audio::spawn(move |msg| {
+            let levels = Arc::new(Levels::default());
+            let tx = audio::spawn(Arc::clone(&levels), move |msg| {
                 let _ = handle.emit("audio-error", msg);
             });
             let _ = tx.send(AudioCmd::Configure(AudioSettings::from_config(&cfg)));
@@ -183,6 +193,7 @@ fn main() {
             app.manage(AppState {
                 config: Mutex::new(cfg),
                 audio: Mutex::new(tx),
+                levels,
                 binding: std::sync::atomic::AtomicBool::new(false),
                 path,
             });
@@ -200,6 +211,7 @@ fn main() {
             audio_stop,
             list_devices,
             set_live,
+            get_levels,
             app_version,
             open_url,
             install_update,

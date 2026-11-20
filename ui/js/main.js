@@ -579,13 +579,71 @@ async function toggleLive() {
 /* ---------- settings ---------- */
 
 let view = 'home';
+// three tabs: Settings, Soundboard ('home'), Sound Effects ('fx')
+const PAGES = { settings: '#settings-page', home: '.split', fx: '#fx-page' };
+const TABS = { settings: '#tab-settings', home: '#tab-home', fx: '#tab-fx' };
+
 function showView(v) {
   view = v;
-  const st = v === 'settings';
-  document.querySelector('.app').classList.toggle('in-settings', st);
-  $('.split').hidden = st;
-  $('#settings-page').hidden = !st;
-  $('#open-settings').classList.toggle('active', st);
+  if (v !== 'settings') stopMeters();
+  document.querySelector('.app').classList.toggle('in-settings', v !== 'home');
+  for (const [name, sel] of Object.entries(PAGES)) $(sel).hidden = name !== v;
+  for (const [name, sel] of Object.entries(TABS)) {
+    const t = $(sel);
+    t.classList.toggle('active', name === v);
+    t.setAttribute('aria-selected', String(name === v));
+  }
+}
+
+function openView(v) {
+  if (v === 'settings') return openSettings();
+  if (v === 'fx') return openFx();
+  showView('home');
+}
+
+/* ---------- mic meters (Settings) ---------- */
+// Rust keeps the loudest level since the last call; we ask about 12 times a second while the
+// Settings page is open and the meters are on. Bars use a -70..0 dBFS scale, like the gate slider.
+
+const METER_MIN_DB = -70;
+const meterPct = (db) => Math.max(0, Math.min(100, ((db - METER_MIN_DB) / -METER_MIN_DB) * 100));
+let meterTimer = null;
+
+function stopMeters() {
+  clearInterval(meterTimer);
+  meterTimer = null;
+}
+
+// `m` = { inFill, outFill, inDb, outDb, note }. Bars jump up fast and fall back slowly.
+function startMeters(m) {
+  stopMeters();
+  let shownIn = METER_MIN_DB, shownOut = METER_MIN_DB, busy = false;
+  const fall = (shown, db) => (db >= shown ? db : Math.max(db, shown - 3.5));
+  const label = (db) => (db <= METER_MIN_DB ? '-∞' : `${Math.round(db)} dB`);
+
+  meterTimer = setInterval(async () => {
+    if (busy || view !== 'settings' || document.hidden) return;
+    busy = true;
+    try {
+      const l = await call('get_levels');
+      shownIn = fall(shownIn, l.input_db);
+      shownOut = fall(shownOut, l.output_db);
+      m.inFill.style.width = `${meterPct(shownIn)}%`;
+      m.outFill.style.width = `${meterPct(shownOut)}%`;
+      m.inDb.textContent = label(shownIn);
+      m.outDb.textContent = label(shownOut);
+      m.outFill.classList.toggle('shut', cfg.gate_on && l.active && !l.gate_open);
+      m.note.textContent = !l.active
+        ? 'Mic is off. Pick a Mic input and a Mic output above, or press Go Live.'
+        : cfg.gate_on
+          ? (l.gate_open ? 'Gate open: your voice goes through.' : 'Gate closed: the mic is muted.')
+          : 'Gate is off: the mic goes through as it is.';
+    } catch (_) {
+      /* the next tick tries again */
+    } finally {
+      busy = false;
+    }
+  }, 80);
 }
 
 async function openSettings() {
@@ -646,6 +704,64 @@ async function openSettings() {
 
   const ss = cfg.sound_shortcuts;
 
+  // Noise gate + level meters. Both have an on/off switch; the threshold slider and the
+  // threshold line on the IN bar only matter while the gate is on.
+  const micGateSection = () => {
+    // only the IN bar gets the red threshold line
+    const bar = (name, withMark) => {
+      const fill = h('i', { class: 'm-fill' });
+      const mark = withMark ? h('b', { class: 'm-mark' }) : null;
+      const db = h('span', { class: 'muted m-db' }, '-∞');
+      return { fill, mark, db, el: h('div', { class: 'meter' }, h('span', { class: 'm-lab' }, name), h('div', { class: 'm-bar' }, fill, mark), db) };
+    };
+    const inBar = bar('IN', true);
+    const outBar = bar('OUT', false);
+    const note = h('div', { class: 'd' }, '');
+    const meters = h('div', { class: 'set-row col meters' }, inBar.el, outBar.el, note);
+
+    const label = h('span', { class: 'muted db' }, `${cfg.gate_threshold_db} dB`);
+    const thr = h('input', {
+      type: 'range', min: -70, max: -20, step: 1, value: cfg.gate_threshold_db,
+      oninput: () => {
+        cfg.gate_threshold_db = Number(thr.value);
+        label.textContent = `${thr.value} dB`;
+        placeMark();
+        commit();
+      },
+    });
+    const placeMark = () => {
+      inBar.mark.hidden = !cfg.gate_on;
+      inBar.mark.style.left = `${meterPct(cfg.gate_threshold_db)}%`;
+    };
+    thr.disabled = !cfg.gate_on;
+    placeMark();
+
+    const gateSwitch = h('input', {
+      type: 'checkbox', checked: cfg.gate_on,
+      onchange: (e) => { cfg.gate_on = e.target.checked; thr.disabled = !cfg.gate_on; placeMark(); commit(); },
+    });
+    const meterSwitch = h('input', {
+      type: 'checkbox', checked: cfg.meters_on,
+      onchange: (e) => {
+        cfg.meters_on = e.target.checked;
+        meters.hidden = !cfg.meters_on;
+        if (cfg.meters_on) startMeters({ inFill: inBar.fill, outFill: outBar.fill, inDb: inBar.db, outDb: outBar.db, note });
+        else stopMeters();
+        commit();
+      },
+    });
+
+    meters.hidden = !cfg.meters_on;
+    if (cfg.meters_on) startMeters({ inFill: inBar.fill, outFill: outBar.fill, inDb: inBar.db, outDb: outBar.db, note });
+    else stopMeters();
+
+    return section('Noise gate & meters',
+      row('Noise gate', 'Mutes your mic between words, so keys and fans do not reach Discord.', gateSwitch),
+      row('Gate threshold', 'The gate opens when your voice is louder than this. Raise it if noise gets through.', h('div', { class: 'inline' }, thr, label)),
+      row('Level meters', 'IN is your mic. OUT is what goes to Discord. Watch IN while you set the threshold.', meterSwitch),
+      meters);
+  };
+
   const cable = devices.cable;
   const liveChoices = [AUTO_CABLE, ...devices.outputs.filter((n) => n !== 'Disabled' && n !== 'Default Output Device')];
 
@@ -678,6 +794,8 @@ async function openSettings() {
       row('Mic output', 'Send the mic to a device, for example a virtual cable. Go Live ignores this.', select('mic_output', devices.outputs)),
       row('Mic volume', null, range('mic_volume'))),
 
+    micGateSection(),
+
     section('Sound shortcuts',
       shortcut('Pause all', ss.pause),
       shortcut('Continue', ss.continue),
@@ -689,6 +807,81 @@ async function openSettings() {
   showView('settings');
 }
 
+
+/* ---------- Sound Effects (mic voice changer) ---------- */
+// ids match src-tauri/src/fx.rs. Names and hints are only for the screen.
+const FX = [
+  ['clean', 'Clean', 'Your normal voice'],
+  ['deep', 'Deep', 'Lower, bigger voice'],
+  ['chipmunk', 'Chipmunk', 'Fast and squeaky'],
+  ['demon', 'Demon', 'Very low, gritty, dark'],
+  ['giant', 'Giant', 'Huge voice in a big hall'],
+  ['robot', 'Robot', 'Metallic robot'],
+  ['alien', 'Alien', 'Warbly sci-fi alien'],
+  ['radio', 'Radio', 'Walkie-talkie, old radio'],
+  ['megaphone', 'Megaphone', 'Loud, honky megaphone'],
+  ['cave', 'Cave', 'Echoing cave'],
+  ['8bit', '8-bit', 'Crunchy retro console'],
+];
+
+function openFx() {
+  const status = h('div', { class: 'fx-status' });
+  const grid = h('div', { class: 'fx-grid' });
+
+  const micReady = () => live || (cfg.mic_input !== 'Disabled' && cfg.mic_output !== 'Disabled');
+  const paintStatus = () => {
+    const warn = cfg.fx_on && !micReady();
+    status.classList.toggle('warn', warn);
+    status.textContent = !cfg.fx_on
+      ? 'Effects are off: your mic goes through as it is.'
+      : warn
+        ? 'The mic is not running. Press Go Live, or pick a Mic input and a Mic output in Settings.'
+        : cfg.fx_preset === 'clean'
+          ? 'Pick an effect below.'
+          : `Effect on: ${FX.find((f) => f[0] === cfg.fx_preset)[1]}. Everyone who hears your mic hears it.`;
+  };
+
+  const paintGrid = () => {
+    grid.classList.toggle('off', !cfg.fx_on);
+    grid.replaceChildren(...FX.map(([id, name, desc]) => h('button', {
+      class: `fx-card${cfg.fx_preset === id ? ' on' : ''}`,
+      role: 'radio',
+      'aria-checked': String(cfg.fx_preset === id),
+      onclick: () => {
+        cfg.fx_preset = id;
+        if (id !== 'clean' && !cfg.fx_on) { cfg.fx_on = true; sw.checked = true; }
+        commit();
+        paintGrid();
+        paintStatus();
+      },
+    }, h('span', { class: 't' }, name), h('span', { class: 'd' }, desc))));
+  };
+
+  const sw = h('input', {
+    type: 'checkbox', checked: cfg.fx_on,
+    onchange: (e) => { cfg.fx_on = e.target.checked; commit(); paintGrid(); paintStatus(); },
+  });
+
+  paintGrid();
+  paintStatus();
+
+  $('#fx-body').replaceChildren(
+    h('section', { class: 'set-section' },
+      h('h4', {}, 'Mic effects'),
+      h('div', { class: 'set-card' },
+        h('div', { class: 'set-row' },
+          h('div', { class: 'txt' },
+            h('div', { class: 't' }, 'Sound effects'),
+            h('div', { class: 'd' }, 'Change your voice live. It works on the mic that goes to Discord.')),
+          h('div', { class: 'ctl' }, sw)),
+        h('div', { class: 'set-row' }, status))),
+    h('section', { class: 'set-section' },
+      h('h4', {}, 'Effect'),
+      h('div', { class: 'set-card', role: 'radiogroup', 'aria-label': 'Effect' }, grid)));
+  $('#fx-body').scrollTop = 0;
+  showView('fx');
+}
+
 /* ---------- render + wiring ---------- */
 
 function render() {
@@ -698,7 +891,7 @@ function render() {
 
 function wire() {
   setIcon($('#preset-chev'), 'chev');
-  setIcon($('#open-settings'), 'gear');
+  for (const t of document.querySelectorAll('#tabs .rail-tab')) setIcon($('.ico', t), t.dataset.icon);
   setIcon($('#live-ico'), 'mic');
   setIcon($('#add-ico'), 'plus');
   setIcon($('#sound-stop'), 'stop');
@@ -706,10 +899,12 @@ function wire() {
   setIcon($('#play-ico'), 'play');
 
   $('#preset-btn').addEventListener('click', openPresetMenu);
-  $('#open-settings').addEventListener('click', () => (view === 'settings' ? showView('home') : openSettings()));
   $('#open-home').addEventListener('click', () => showView('home'));
+  for (const t of document.querySelectorAll('#tabs .rail-tab')) {
+    t.addEventListener('click', () => { if (t.dataset.view !== view) openView(t.dataset.view); });
+  }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && view === 'settings' && !dlg.open && !bindDlg.open) showView('home');
+    if (e.key === 'Escape' && view !== 'home' && !dlg.open && !bindDlg.open) showView('home');
   });
   $('#go-live').addEventListener('click', toggleLive);
 
@@ -855,6 +1050,7 @@ async function init() {
   lastVolume = cfg.volume || 100;
   render();
   renderLive();
+  showView('home');
 
   // hotkeys change the selection in Rust, then tell us
   listen('config-changed', (c) => { cfg = c; render(); });

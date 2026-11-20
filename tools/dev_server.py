@@ -10,8 +10,10 @@ What is fake here:
 """
 
 import json
+import math
 import os
 import sys
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +27,11 @@ def default_config():
         "primary_device_volume": 100,
         "secondary_device_volume": 100,
         "mic_volume": 100,
+        "gate_on": False,
+        "gate_threshold_db": -50,
+        "meters_on": True,
+        "fx_on": False,
+        "fx_preset": "clean",
         "overlap": False,
         "primary_output": "Default Output Device",
         "secondary_output": "Disabled",
@@ -66,6 +73,12 @@ STATE = {"config": load_config()}
 
 def normalize(cfg):
     cfg.setdefault("live_output", "Auto (VB-Cable)")
+    cfg.setdefault("gate_on", False)
+    cfg.setdefault("gate_threshold_db", -50)
+    cfg.setdefault("meters_on", True)
+    cfg.setdefault("fx_on", False)
+    cfg.setdefault("fx_preset", "clean")
+    cfg["gate_threshold_db"] = max(-70, min(-20, int(cfg["gate_threshold_db"])))
     if not cfg["presets"]:
         cfg["presets"].append(default_config()["presets"][0])
     if cfg["selected_preset"] >= len(cfg["presets"]):
@@ -140,7 +153,20 @@ def set_live(args):
             "sounds": LIVE["on"], "mic": LIVE["on"], "headphones": True}
 
 
+def get_levels(_args):
+    """Fake mic: a voice that comes and goes, plus a little room noise."""
+    cfg = STATE["config"]
+    t = time.time()
+    speaking = math.sin(t * 1.3) > 0.1
+    noise = -58 + 3 * math.sin(t * 7)
+    voice = -24 + 6 * math.sin(t * 9) if speaking else noise
+    gate_open = (not cfg.get("gate_on")) or voice >= cfg.get("gate_threshold_db", -50)
+    out = voice if gate_open else -100
+    return {"input_db": voice, "output_db": out, "active": True, "gate_open": gate_open}
+
+
 COMMANDS = {
+    "get_levels": get_levels,
     "get_state": get_state,
     "set_config": set_config,
     "select_preset": select_preset,
