@@ -626,8 +626,9 @@ async function openSettings() {
       : h('div', { class: 'hint' },
         `Install VB-CABLE (free) from ${CABLE_URL}, restart Windows, then open Settings again. `,
         h('button', {
-          onclick: () => navigator.clipboard.writeText(CABLE_URL).then(() => toast('Link copied.'), () => toast(CABLE_URL)),
-        }, 'Copy link')),
+          onclick: () => call('open_url', { url: CABLE_URL }).catch(
+            () => navigator.clipboard.writeText(CABLE_URL).then(() => toast('Link copied.'), () => toast(CABLE_URL))),
+        }, 'Open page')),
     h('div', { class: 'field' }, h('label', {}, 'Go Live output'), select('live_output', liveChoices)),
 
     h('div', { class: 'sect' }, 'Sound output'),
@@ -727,46 +728,42 @@ function wire() {
   });
 }
 
-/* ---------- auto update (installed app only) ---------- */
+/* ---------- new version notice (installed app only) ---------- */
+// No auto-install and no signing key: we ask GitHub for the newest Release and, if it is
+// newer than this build, show a bar with a Download button (opens the Release page).
+
+const REPO_API = 'https://api.github.com/repos/same-09/RustBoard/releases/latest';
+
+const versionParts = (v) => String(v).replace(/^v/i, '').split(/[.+-]/).map((n) => parseInt(n, 10) || 0);
+
+function isNewer(latest, current) {
+  const a = versionParts(latest);
+  const b = versionParts(current);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] || 0) - (b[i] || 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+}
 
 async function checkForUpdate() {
-  const T = window.__TAURI__;
-  if (!isTauri || !T.updater) return;
-  let update;
+  if (!isTauri) return;
   try {
-    update = await T.updater.check();
+    const [current, res] = await Promise.all([
+      call('app_version'),
+      fetch(REPO_API, { headers: { accept: 'application/vnd.github+json' } }),
+    ]);
+    if (!res.ok) return; // no Release yet, offline or rate limited: stay quiet
+    const rel = await res.json();
+    if (!rel.tag_name || !isNewer(rel.tag_name, current)) return;
+
+    $('#update-text').textContent = `New version ${rel.tag_name} is available (you have ${current}).`;
+    $('#update-btn').onclick = () => call('open_url', { url: rel.html_url }).catch((e) => toast(e, true));
+    $('#update-later').onclick = () => { $('#update-bar').hidden = true; };
+    $('#update-bar').hidden = false;
   } catch (e) {
-    console.warn('update check failed', e); // offline or no release yet: stay quiet
-    return;
+    console.warn('update check failed', e);
   }
-  if (!update) return;
-
-  const bar = $('#update-bar');
-  const text = $('#update-text');
-  const btn = $('#update-btn');
-  text.textContent = `New version ${update.version} is ready.`;
-  bar.hidden = false;
-  $('#update-later').onclick = () => { bar.hidden = true; };
-
-  btn.onclick = async () => {
-    btn.disabled = true;
-    let total = 0;
-    let got = 0;
-    try {
-      await update.downloadAndInstall((ev) => {
-        if (ev.event === 'Started') total = ev.data.contentLength || 0;
-        else if (ev.event === 'Progress') {
-          got += ev.data.chunkLength;
-          text.textContent = total ? `Downloading… ${Math.round((got / total) * 100)}%` : 'Downloading…';
-        } else if (ev.event === 'Finished') text.textContent = 'Installing…';
-      });
-      await T.process.relaunch();
-    } catch (e) {
-      btn.disabled = false;
-      text.textContent = `New version ${update.version} is ready.`;
-      toast(`Update failed: ${e}`, true);
-    }
-  };
 }
 
 async function init() {

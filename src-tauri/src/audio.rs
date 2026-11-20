@@ -359,10 +359,8 @@ pub fn pick_cable(outputs: &[String], wanted: &str) -> Option<String> {
             Some(0) // VB-CABLE, "CABLE Input (VB-Audio Virtual Cable)"
         } else if n.contains("cable-a input") || n.contains("cable-b input") {
             Some(1) // VB-CABLE A+B
-        } else if n.contains("virtual audio driver") {
-            Some(2) // the driver in this repo
         } else if n.contains("virtual cable") && !n.contains("16ch") {
-            Some(3)
+            Some(2)
         } else {
             None
         }
@@ -591,11 +589,11 @@ mod tests {
     }
 
     #[test]
-    fn auto_prefers_vb_cable_over_other_virtual_devices() {
-        let o = names(&["Virtual Audio Driver", "CABLE Input (VB-Audio Virtual Cable)"]);
+    fn auto_prefers_vb_cable_over_other_virtual_cables() {
+        let o = names(&["Some Virtual Cable Out", "CABLE-A Input (VB-Audio Cable A)", "CABLE Input (VB-Audio Virtual Cable)"]);
         assert_eq!(pick_cable(&o, AUTO_CABLE).as_deref(), Some("CABLE Input (VB-Audio Virtual Cable)"));
-        let o = names(&["Speakers", "Virtual Audio Driver"]);
-        assert_eq!(pick_cable(&o, AUTO_CABLE).as_deref(), Some("Virtual Audio Driver"));
+        let o = names(&["Speakers", "Some Virtual Cable Out"]);
+        assert_eq!(pick_cable(&o, AUTO_CABLE).as_deref(), Some("Some Virtual Cable Out"));
     }
 
     #[test]

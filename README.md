@@ -25,24 +25,19 @@ cargo tauri build      # installer
 > The Rust code was written without a compiler at hand. Expect to fix a typo
 > or two on the first `cargo check`. The UI and the Python tools were tested.
 
-## Release + auto update (one-time setup)
+## Release (no key, no secrets)
 
-1. Make a signing key (keep the private file secret, never commit it):
-   ```
-   cd src-tauri
-   npx @tauri-apps/cli@2 signer generate -w ../rustboard.key
-   ```
-2. Put the **public** key (`rustboard.key.pub`) into `src-tauri/tauri.conf.json`,
-   replacing `PASTE_PUBLIC_KEY_HERE`.
-3. GitHub repo -> Settings -> Secrets and variables -> Actions -> add:
-   - `TAURI_SIGNING_PRIVATE_KEY` = full text of `rustboard.key`
-   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = the password you typed (empty if none)
-4. Release: `git tag v0.0.1 && git push origin v0.0.1`
+```
+git tag v0.0.1
+git push origin v0.0.1
+```
 
-The workflow builds `Rustboard_x.y.z_x64-setup.exe` (double-click: installer with
-Start menu + desktop shortcut) and attaches it to the Release together with `latest.json`.
-Installed apps check that file on start, show a bar "New version ... is ready",
-download, install and restart, no browser needed. Pushes to `main` only test the build.
+The workflow (`.github/workflows/build.yml`) builds `Rustboard_x.y.z_x64-setup.exe` (double-click: installer with
+Start menu + desktop shortcut) and attaches it to a GitHub Release. Pushes to `main` only test the build.
+
+**Updates:** there is no auto-install. On start the app asks GitHub for the newest Release; if it is newer than the
+running version, a bar says "New version ... is available" with a **Download** button that opens the Release page.
+Nothing needs signing, so no `TAURI_SIGNING_PRIVATE_KEY` secret is needed.
 
 ## Move your old settings
 
@@ -103,13 +98,3 @@ Config: `<app data>/com.rustboard.app/config.json`
 Settings > *Discord (VB-Cable)* shows whether a cable was found and lets you pick another device for Go Live
 (default: `Auto`, which prefers VB-CABLE, then other virtual cables). While live, sounds are 3 dB lower so
 sounds + mic do not clip on the cable.
-
-## Virtual microphone driver (for Discord, no VB-Cable)
-
-`driver/` holds a virtual speaker + virtual mic (fork of VirtualDrivers/Virtual-Audio-Driver,
-MIT) with a loopback patch: sound played to the virtual speaker comes out of the virtual mic.
-See `driver/LOOPBACK.md`. Built by `.github/workflows/build-driver.yml`
-(push to `driver/**`). A tag like `v0.0.4` also builds it and adds `VirtualAudioDriver-x64.zip` to the same Release as the app.
-
-Use: Rustboard Secondary output + Mic output = `Virtual Audio Driver`, Discord input = `Virtual Mic Driver`.
-Not signed: needs `bcdedit /set testsigning on`. Not tested yet, try in a VM first.

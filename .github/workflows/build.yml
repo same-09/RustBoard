@@ -3,10 +3,8 @@ name: Build Rustboard
 on:
   push:
     branches: [ main, master ]
-    paths-ignore: [ 'driver/**', '.github/workflows/build-driver.yml' ]
     tags: [ 'v*' ]
   pull_request:
-    paths-ignore: [ 'driver/**' ]
   workflow_dispatch:
 
 permissions:
@@ -24,7 +22,7 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # tag v0.0.2  ->  app version 0.0.2 (the updater compares versions)
+      # tag v0.0.2  ->  app version 0.0.2 (the app compares it with the newest Release)
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
@@ -33,38 +31,14 @@ jobs:
           (Get-Content src-tauri/tauri.conf.json -Raw) -replace '"version": "[^"]*"', "`"version`": `"$v`"" | Set-Content src-tauri/tauri.conf.json
           (Get-Content src-tauri/Cargo.toml -Raw) -replace '(?m)^version = "[^"]*"', "version = `"$v`"" | Set-Content src-tauri/Cargo.toml
 
-      # Updater files need the signing key, so only tag builds make them.
-      # Normal pushes just test that everything builds.
-      - name: Skip updater files on normal pushes
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        shell: pwsh
-        run: |
-          (Get-Content src-tauri/tauri.conf.json -Raw) -replace '"createUpdaterArtifacts": true', '"createUpdaterArtifacts": false' | Set-Content src-tauri/tauri.conf.json
-
-      # Safe check: prints only the length and whether the key looks right, never the key.
-      - name: Check signing secrets
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        env:
-          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          PASS: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          Write-Host "Private key length: $($env:KEY.Length)  (expected: 200 or more)"
-          Write-Host "Starts like a real key: $($env:KEY.TrimStart().StartsWith('dW50cnVzdGVkIGNvbW1lbnQ6'))"
-          Write-Host "Password length: $($env:PASS.Length)"
-          if ($env:KEY.Length -eq 0) { throw "TAURI_SIGNING_PRIVATE_KEY is EMPTY or not found. Check the secret name and that it is a Repository secret." }
-
       # Builds the NSIS setup (.exe with shortcuts). On a tag it also makes the
-      # GitHub Release and uploads latest.json, which the in-app updater reads.
+      # GitHub Release and attaches the installer. No signing key needed.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: src-tauri
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: Rustboard ${{ github.ref_name }}
           releaseDraft: false
           prerelease: false
-          uploadUpdaterJson: true

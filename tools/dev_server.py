@@ -163,6 +163,8 @@ COMMANDS = {
     "audio_stop": make_noop("stop"),
     "list_devices": list_devices,
     "set_live": set_live,
+    "app_version": lambda _a: "0.0.0-mock",
+    "open_url": make_noop("open_url"),
     "begin_bind": make_noop("begin bind"),
     "cancel_bind": make_noop("cancel bind"),
 }

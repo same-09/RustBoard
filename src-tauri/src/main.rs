@@ -5,6 +5,7 @@ mod audio;
 mod config;
 mod counter;
 mod hotkeys;
+mod links;
 mod logic;
 mod state;
 
@@ -152,6 +153,27 @@ fn set_live(state: State<'_, AppState>, on: bool) -> Result<LiveStatus, String> 
     rx.recv_timeout(Duration::from_secs(8)).map_err(|e| e.to_string())?
 }
 
+/// Version of this build (the release workflow sets it from the git tag).
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Open one of our own links (new release, VB-CABLE site) in the default browser.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !links::allowed(&url) {
+        return Err("This link is not allowed.".into());
+    }
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("explorer");
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(&url).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// After this, the next key release sends a "keys-bound" event with the held keys.
 #[tauri::command]
 fn begin_bind(state: State<'_, AppState>) {
@@ -166,8 +188,6 @@ fn cancel_bind(state: State<'_, AppState>) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -203,6 +223,8 @@ fn main() {
             audio_stop,
             list_devices,
             set_live,
+            app_version,
+            open_url,
             begin_bind,
             cancel_bind
         ])
