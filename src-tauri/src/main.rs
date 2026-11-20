@@ -111,10 +111,10 @@ fn audio_stop(state: State<'_, AppState>) {
 
 /// `async` flag = runs on a worker thread, so waiting for the audio thread does not block the UI.
 #[tauri::command(async)]
-fn list_devices(state: State<'_, AppState>) -> Result<Devices, String> {
-    let (tx, rx) = mpsc::channel();
-    state.send(AudioCmd::Devices(tx));
-    rx.recv_timeout(Duration::from_secs(3)).map_err(|e| e.to_string())
+fn list_devices() -> Result<Devices, String> {
+    // Not through the audio thread: it can be busy opening streams, and then Settings
+    // waits behind it. cpal lists devices fine from any thread.
+    Ok(audio::list_devices())
 }
 
 /// Go Live on/off: sounds and your mic both go to the virtual cable (VB-CABLE), so Discord

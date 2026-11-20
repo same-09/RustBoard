@@ -1,6 +1,7 @@
 //! Config model + load/save. Port of ConfigurationModel / Preset / Sound.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -133,6 +134,9 @@ pub struct Config {
     /// Which effect: an id from `fx::IDS` ("clean", "deep", "robot", ...).
     #[serde(default = "d_fx_preset")]
     pub fx_preset: String,
+    /// Optional hotkey per mic effect: effect id -> keys. No entry = no hotkey.
+    #[serde(default)]
+    pub fx_keys: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub overlap: bool,
     #[serde(default = "d_primary")]
@@ -166,6 +170,7 @@ impl Default for Config {
             meters_on: true,
             fx_on: false,
             fx_preset: d_fx_preset(),
+            fx_keys: BTreeMap::new(),
             overlap: false,
             primary_output: d_primary(),
             secondary_output: d_disabled(),
@@ -212,6 +217,7 @@ impl Config {
         if !crate::fx::is_known(&self.fx_preset) {
             self.fx_preset = d_fx_preset();
         }
+        self.fx_keys.retain(|id, keys| crate::fx::is_known(id) && !keys.is_empty());
     }
 }
 
@@ -286,6 +292,19 @@ mod tests {
         c.fx_preset = "robot".into();
         c.normalize();
         assert_eq!(c.fx_preset, "robot");
+    }
+
+    #[test]
+    fn effect_hotkeys_are_optional_and_cleaned() {
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(c.fx_keys.is_empty());
+        let mut c = Config::default();
+        c.fx_keys.insert("robot".into(), vec!["F5".into()]);
+        c.fx_keys.insert("bogus".into(), vec!["F6".into()]);
+        c.fx_keys.insert("cave".into(), vec![]);
+        c.normalize();
+        assert_eq!(c.fx_keys.len(), 1);
+        assert!(c.fx_keys.contains_key("robot"));
     }
 
     #[test]

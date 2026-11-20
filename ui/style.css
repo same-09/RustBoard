@@ -743,6 +743,10 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.15); backdrop-filter: blur(2px); 
 .fx-card.on { background: var(--btn-bg); color: var(--btn-text); box-shadow: none; }
 .fx-card.on .d { color: color-mix(in srgb, var(--btn-text) 70%, transparent); }
 .fx-grid.off { opacity: 0.5; }
+.fx-cell { display: flex; flex-direction: column; gap: 6px; }
+.fx-cell .fx-card { flex: 1; }
+.fx-key { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 0 2px; min-height: 26px; }
+.fx-key button { padding: 2px 8px; font-size: 11px; }
 .fx-status { color: var(--text-tertiary); font-size: 12px; line-height: 17px; }
 .fx-status.warn { color: var(--accent); }
 

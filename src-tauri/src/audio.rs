@@ -568,7 +568,7 @@ fn find_input(host: &cpal::Host, name: &str) -> Option<cpal::Device> {
         .find(|d| d.name().map(|n| n == name).unwrap_or(false))
 }
 
-fn list_devices() -> Devices {
+pub fn list_devices() -> Devices {
     let host = cpal::default_host();
     let mut outputs = vec![DISABLED.to_string(), DEFAULT_OUT.to_string()];
     let mut inputs = vec![DISABLED.to_string(), DEFAULT_IN.to_string()];

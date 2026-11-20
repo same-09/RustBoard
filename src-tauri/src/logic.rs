@@ -1,6 +1,6 @@
 //! Shortcut logic. Port of ShortcutManager from ViewModel.
 
-use crate::audio::AudioCmd;
+use crate::audio::{AudioCmd, AudioSettings};
 use crate::config::Config;
 use crate::state::AppState;
 use std::sync::atomic::Ordering;
@@ -72,6 +72,26 @@ pub fn on_key_down(app: &AppHandle, key: &str, pressed: &[String], first: bool) 
             };
             if let Some(i) = hit {
                 cfg.selected_preset = i;
+                changed = true;
+            }
+
+            // mic effect hotkeys: press = effect on, press the same one again = effects off
+            let hit = {
+                let ids: Vec<&String> = cfg.fx_keys.keys().collect();
+                let list: Vec<&[String]> = cfg.fx_keys.values().map(|k| &k[..]).collect();
+                resolve(key, pressed, &list).map(|i| ids[i].clone())
+            };
+            if let Some(id) = hit {
+                if id == "clean" || (cfg.fx_on && cfg.fx_preset == id) {
+                    cfg.fx_on = false;
+                    if id == "clean" {
+                        cfg.fx_preset = id;
+                    }
+                } else {
+                    cfg.fx_preset = id;
+                    cfg.fx_on = true;
+                }
+                state.send(AudioCmd::Configure(AudioSettings::from_config(&cfg)));
                 changed = true;
             }
         }

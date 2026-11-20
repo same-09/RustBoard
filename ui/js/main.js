@@ -695,13 +695,32 @@ function startMeters(m) {
   }, 80);
 }
 
-async function openSettings() {
-  try {
-    devices = await call('list_devices');
-  } catch (e) {
-    toast(`Cannot list audio devices: ${e}`, true);
-  }
+// Listing audio devices is slow on Windows (can take seconds). Show Settings right away
+// from the cached list, refresh in the background, and redraw only if the list changed.
+let devicesLoaded = false;
+async function refreshDevices() {
+  const before = JSON.stringify(devices);
+  devices = await call('list_devices');
+  devicesLoaded = true;
+  return JSON.stringify(devices) !== before;
+}
 
+async function openSettings() {
+  if (devicesLoaded) {
+    refreshDevices()
+      .then((changed) => { if (changed && view === 'settings') buildSettings(); })
+      .catch(() => {});
+  } else {
+    try {
+      await refreshDevices();
+    } catch (e) {
+      toast(`Cannot list audio devices: ${e}`, true);
+    }
+  }
+  buildSettings();
+}
+
+function buildSettings() {
   const select = (key, names) => {
     const s = h('select', { onchange: () => { cfg[key] = s.value; commit(); } },
       names.map((n) => h('option', { value: n }, n)));
@@ -873,6 +892,8 @@ const FX = [
   ['8bit', '8-bit', 'Crunchy retro console'],
 ];
 
+let repaintFx = null; // redraw the Sound Effects page (a hotkey changed the effect)
+
 function openFx() {
   const status = h('div', { class: 'fx-status' });
   const grid = h('div', { class: 'fx-grid' });
@@ -890,20 +911,41 @@ function openFx() {
           : `Effect on: ${FX.find((f) => f[0] === cfg.fx_preset)[1]}. Everyone who hears your mic hears it.`;
   };
 
+  // optional hotkey under each effect card: Bind / Clear (press it once = on, again = off)
+  const keyRow = (id) => {
+    const box = h('span', {});
+    const paint = () => box.replaceChildren(keysBox((cfg.fx_keys && cfg.fx_keys[id]) || []));
+    paint();
+    return h('div', { class: 'fx-key' },
+      box,
+      h('button', {
+        onclick: () => bindKeys((k) => {
+          cfg.fx_keys = cfg.fx_keys || {};
+          if (k.length) cfg.fx_keys[id] = k; else delete cfg.fx_keys[id];
+          paint(); commit();
+        }),
+      }, 'Bind'),
+      h('button', {
+        onclick: () => { if (cfg.fx_keys) delete cfg.fx_keys[id]; paint(); commit(); },
+      }, 'Clear'));
+  };
+
   const paintGrid = () => {
     grid.classList.toggle('off', !cfg.fx_on);
-    grid.replaceChildren(...FX.map(([id, name, desc]) => h('button', {
-      class: `fx-card${cfg.fx_preset === id ? ' on' : ''}`,
-      role: 'radio',
-      'aria-checked': String(cfg.fx_preset === id),
-      onclick: () => {
-        cfg.fx_preset = id;
-        if (id !== 'clean' && !cfg.fx_on) { cfg.fx_on = true; sw.checked = true; }
-        commit();
-        paintGrid();
-        paintStatus();
-      },
-    }, h('span', { class: 't' }, name), h('span', { class: 'd' }, desc))));
+    grid.replaceChildren(...FX.map(([id, name, desc]) => h('div', { class: 'fx-cell' },
+      h('button', {
+        class: `fx-card${cfg.fx_preset === id ? ' on' : ''}`,
+        role: 'radio',
+        'aria-checked': String(cfg.fx_preset === id),
+        onclick: () => {
+          cfg.fx_preset = id;
+          if (id !== 'clean' && !cfg.fx_on) { cfg.fx_on = true; sw.checked = true; }
+          commit();
+          paintGrid();
+          paintStatus();
+        },
+      }, h('span', { class: 't' }, name), h('span', { class: 'd' }, desc)),
+      keyRow(id))));
   };
 
   const sw = h('input', {
@@ -913,6 +955,7 @@ function openFx() {
 
   paintGrid();
   paintStatus();
+  repaintFx = () => { sw.checked = cfg.fx_on; paintGrid(); paintStatus(); };
 
   $('#fx-body').replaceChildren(
     h('section', { class: 'set-section' },
@@ -927,7 +970,7 @@ function openFx() {
     h('section', { class: 'set-section' },
       h('h4', {}, 'Effect'),
       h('div', { class: 'fx-status', style: 'margin: -4px 2px 8px' },
-        'Effects for single sounds: Soundboard > edit a sound > Sound effect.'),
+        'Effects for single sounds: Soundboard > edit a sound > Sound effect. Optional hotkey under each effect: press once = on, press again = off.'),
       h('div', { class: 'set-card', role: 'radiogroup', 'aria-label': 'Effect' }, grid)));
   $('#fx-body').scrollTop = 0;
   showView('fx');
@@ -1102,9 +1145,10 @@ async function init() {
   render();
   renderLive();
   showView('home');
+  refreshDevices().catch(() => {}); // warm the device list so Settings opens fast
 
   // hotkeys change the selection in Rust, then tell us
-  listen('config-changed', (c) => { cfg = c; render(); });
+  listen('config-changed', (c) => { cfg = c; render(); if (view === 'fx' && repaintFx) repaintFx(); });
   listen('audio-error', (msg) => toast(msg, true));
 
   checkForUpdate();
