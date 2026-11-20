@@ -76,7 +76,8 @@ pub struct LiveStatus {
 
 pub enum AudioCmd {
     Configure(AudioSettings),
-    Play { file: String, volume: f32, looped: bool },
+    /// `fx` = effect on this sound: 0 = none, else the preset index in `fx::IDS`
+    Play { file: String, volume: f32, looped: bool, fx: u32 },
     Pause,
     Resume,
     Stop,
@@ -264,7 +265,7 @@ impl Output {
         self.update_levels();
     }
 
-    fn play(&mut self, file: &str, volume: f32, looped: bool, overlap: bool) -> Result<(), String> {
+    fn play(&mut self, file: &str, volume: f32, looped: bool, overlap: bool, fx: u32) -> Result<(), String> {
         self.sinks.retain(|(s, _)| !s.empty());
         if !overlap {
             self.stop();
@@ -273,10 +274,16 @@ impl Output {
         let source = Decoder::new(BufReader::new(f)).map_err(|e| format!("Cannot decode '{}': {}", file, e))?;
         let sink = Sink::try_new(&self.handle).map_err(|e| e.to_string())?;
         sink.set_volume(self.level(volume));
-        if looped {
-            sink.append(source.buffered().repeat_infinite());
+        if fx == 0 {
+            if looped {
+                sink.append(source.buffered().repeat_infinite());
+            } else {
+                sink.append(source);
+            }
+        } else if looped {
+            sink.append(FxSource::new(source.buffered().repeat_infinite().convert_samples::<f32>(), fx));
         } else {
-            sink.append(source);
+            sink.append(FxSource::new(source.convert_samples::<f32>(), fx));
         }
         self.sinks.push((sink, volume));
         Ok(())
@@ -298,6 +305,47 @@ impl Output {
         for (s, _) in self.sinks.drain(..) {
             s.stop();
         }
+    }
+}
+
+/// A sound file with a sound effect on it (see `fx::FxStream`).
+struct FxSource<S: Source<Item = f32>> {
+    stream: crate::fx::FxStream<S>,
+    channels: u16,
+    rate: u32,
+}
+
+impl<S: Source<Item = f32>> FxSource<S> {
+    fn new(inner: S, fx: u32) -> Self {
+        let channels = inner.channels();
+        let rate = inner.sample_rate();
+        FxSource { stream: crate::fx::FxStream::new(inner, fx, channels, rate), channels, rate }
+    }
+}
+
+impl<S: Source<Item = f32>> Iterator for FxSource<S> {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        self.stream.next()
+    }
+}
+
+impl<S: Source<Item = f32>> Source for FxSource<S> {
+    fn current_frame_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.rate
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
     }
 }
 
@@ -759,12 +807,12 @@ impl Engine {
         }
     }
 
-    fn play(&mut self, file: &str, volume: f32, looped: bool) {
+    fn play(&mut self, file: &str, volume: f32, looped: bool, fx: u32) {
         self.retry_missing_outputs();
         let overlap = self.settings.as_ref().map(|s| s.overlap).unwrap_or(false);
         let mut errors = Vec::new();
         for out in [self.primary.as_mut(), self.secondary.as_mut()].into_iter().flatten() {
-            if let Err(e) = out.play(file, volume, looped, overlap) {
+            if let Err(e) = out.play(file, volume, looped, overlap, fx) {
                 errors.push(e);
             }
         }
@@ -797,7 +845,7 @@ pub fn spawn(levels: Arc<Levels>, on_error: impl Fn(String) + Send + 'static) ->
         for cmd in rx {
             match cmd {
                 AudioCmd::Configure(s) => engine.configure(s),
-                AudioCmd::Play { file, volume, looped } => engine.play(&file, volume, looped),
+                AudioCmd::Play { file, volume, looped, fx } => engine.play(&file, volume, looped, fx),
                 AudioCmd::Pause => engine.each_output(|o| o.pause()),
                 AudioCmd::Resume => engine.each_output(|o| o.resume()),
                 AudioCmd::Stop => engine.each_output(|o| o.stop()),

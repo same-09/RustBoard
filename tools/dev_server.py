@@ -165,7 +165,19 @@ def get_levels(_args):
     return {"input_db": voice, "output_db": out, "active": True, "gate_open": gate_open}
 
 
+def image_data(args):
+    import base64
+    import mimetypes
+    path = args.get("path", "")
+    mime = mimetypes.guess_type(path)[0] or ""
+    if not mime.startswith("image/"):
+        raise ValueError("This is not a picture.")
+    with open(path, "rb") as f:
+        return "data:%s;base64,%s" % (mime, base64.b64encode(f.read()).decode("ascii"))
+
+
 COMMANDS = {
+    "image_data": image_data,
     "get_levels": get_levels,
     "get_state": get_state,
     "set_config": set_config,

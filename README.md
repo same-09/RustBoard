@@ -66,6 +66,7 @@ src-tauri/src/
   main.rs      Tauri commands + setup
   config.rs    config model, load/save (config.json)
   audio.rs     audio thread: 2 outputs, mixer, mic passthrough (+ resampler, noise gate, level meters), Go Live, VB-Cable detection
+  images.rs    sound pictures: file -> data URL for the UI
   fx.rs        mic sound effects (voice changer): pitch, echo, reverb, robot... (port of Voicefork)
   hotkeys.rs   global key hook (rdev)
   logic.rs     shortcut matching, preset switch
@@ -81,6 +82,13 @@ Sound Effects is a voice changer for the mic passthrough (11 effects: Clean, Dee
 Robot, Alien, Radio, Megaphone, Cave, 8-bit). It runs after the noise gate and before the mic volume, so it
 works with Go Live and with a Mic input + Mic output pair. Config keys: `fx_on`, `fx_preset`.
 Pitch effects add about 20-30 ms of delay.
+
+Each sound in the Soundboard can also have its own effect (edit a sound > **Sound effect**, config key `fx` on the
+sound). Echo and reverb effects ring out a little after the file ends. A sound's effect does not depend on the mic effect.
+
+The Soundboard shows sounds as tiles that run to the right and wrap to the next row. Each sound can have a
+picture (edit a sound > **Picture**; png, jpg, webp, gif, bmp, up to 8 MB; config key `image`). Without a picture
+the tile gets a generated cover.
 
 ## Differences from the C# app
 

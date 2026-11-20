@@ -40,6 +40,7 @@ impl AppState {
             file,
             volume: sound.volume as f32 / 100.0,
             looped: sound.looped,
+            fx: crate::fx::index_of(&sound.fx),
         });
     }
 }

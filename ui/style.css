@@ -382,10 +382,13 @@ input[type="checkbox"]:checked:active::after { left: 14px; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 0 84px;
+  /* tiles run to the right, then wrap to the next row (like an album shelf) */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 160px);
+  justify-content: start;
+  align-content: start;
+  gap: 18px 16px;
+  padding: 8px 8px 84px;
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 18px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 6px, #000 calc(100% - 18px), transparent 100%);
 }
@@ -742,3 +745,40 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.15); backdrop-filter: blur(2px); 
 .fx-grid.off { opacity: 0.5; }
 .fx-status { color: var(--text-tertiary); font-size: 12px; line-height: 17px; }
 .fx-status.warn { color: var(--accent); }
+
+
+/* ---------- sound tiles: picture on top, name below ---------- */
+.list > .empty { grid-column: 1 / -1; }
+.sound {
+  position: relative;
+  display: block;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.sound:hover, .sound.selected { background: transparent; }
+.sound .art { position: relative; width: 160px; height: 160px; }
+.sound .art .cover { width: 160px; height: 160px; border-radius: 12px; }
+.sound .art .cover > svg { width: 40px; height: 40px; }
+.sound .art .cover.has-pic > svg { display: none; }
+.cover .pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cover .go { z-index: 1; }
+.cover .go svg { width: 28px; height: 28px; }
+.sound.selected .art .cover { box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--text-primary); }
+.sound .name { margin-top: 10px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.sound .sub { margin-top: 3px; }
+.sound .acts { position: absolute; top: 6px; right: 6px; z-index: 2; padding: 2px; border-radius: 9px; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(8px); color: #fff; }
+.sound .acts button { color: #fff; }
+.sound .chips { position: absolute; left: 6px; right: 6px; bottom: 6px; z-index: 2; display: flex; align-items: center; gap: 4px; pointer-events: none; }
+.chip { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 99px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 11px; font-weight: 500; backdrop-filter: blur(8px); }
+.chip svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chip.vol { margin-left: auto; font-variant-numeric: tabular-nums; }
+.chip.vol.warn { background: var(--accent); }
+
+/* picture field in the sound dialog */
+.pic-row { display: flex; align-items: center; gap: 8px; }
+.pic-prev { width: 64px; height: 64px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 10px; background: var(--fill); color: var(--text-tertiary); }
+.pic-prev img { width: 100%; height: 100%; object-fit: cover; }
+.pic-prev svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sound .err { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

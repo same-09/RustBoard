@@ -61,6 +61,12 @@ pub struct Sound {
     pub volume: u32,
     #[serde(default, rename = "loop")]
     pub looped: bool,
+    /// Effect on this sound: an id from `fx::IDS` ("clean" = none).
+    #[serde(default = "d_fx_preset")]
+    pub fx: String,
+    /// Picture file shown on the sound tile. Empty = generated cover.
+    #[serde(default)]
+    pub image: String,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -73,6 +79,8 @@ impl Default for Sound {
             keys: Vec::new(),
             volume: 100,
             looped: false,
+            fx: d_fx_preset(),
+            image: String::new(),
             error: None,
         }
     }
@@ -191,6 +199,9 @@ impl Config {
             }
             for s in &mut p.sounds {
                 s.volume = s.volume.min(100);
+                if !crate::fx::is_known(&s.fx) {
+                    s.fx = d_fx_preset();
+                }
             }
         }
         self.volume = self.volume.min(100);
@@ -252,6 +263,18 @@ mod tests {
         let c: Config = serde_json::from_str("{}").unwrap();
         assert!(!c.fx_on);
         assert_eq!(c.fx_preset, "clean");
+    }
+
+    #[test]
+    fn old_sound_has_no_effect_and_bad_effect_is_fixed() {
+        let s: Sound = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.fx, "clean");
+        let mut c = Config::default();
+        c.presets[0].sounds.push(Sound { fx: "bogus".into(), ..Sound::default() });
+        c.presets[0].sounds.push(Sound { fx: "cave".into(), ..Sound::default() });
+        c.normalize();
+        assert_eq!(c.presets[0].sounds[0].fx, "clean");
+        assert_eq!(c.presets[0].sounds[1].fx, "cave");
     }
 
     #[test]

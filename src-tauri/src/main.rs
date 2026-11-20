@@ -5,6 +5,7 @@ mod audio;
 mod config;
 mod fx;
 mod hotkeys;
+mod images;
 mod links;
 mod logic;
 mod state;
@@ -132,6 +133,12 @@ fn get_levels(state: State<'_, AppState>) -> LevelsOut {
     state.levels.take()
 }
 
+/// A sound picture as a data URL (png, jpg, webp, gif, bmp; 8 MB at most).
+#[tauri::command(async)]
+fn image_data(path: String) -> Result<String, String> {
+    images::data_url(&path)
+}
+
 /// Version of this build (the release workflow sets it from the git tag).
 #[tauri::command]
 fn app_version() -> String {
@@ -212,6 +219,7 @@ fn main() {
             list_devices,
             set_live,
             get_levels,
+            image_data,
             app_version,
             open_url,
             install_update,

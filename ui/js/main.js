@@ -172,16 +172,35 @@ function setAmbient(sound) {
   amb.classList.add('swap');
 }
 
-function soundCover(name, onPlay) {
+// sound pictures: Rust reads the file and gives a data URL; we keep it per path
+const imageCache = new Map();
+function loadImage(path) {
+  if (!path) return Promise.resolve(null);
+  if (!imageCache.has(path)) imageCache.set(path, call('image_data', { path }).catch(() => null));
+  return imageCache.get(path);
+}
+
+const IMAGE_FILTER = [{ name: 'Picture', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }];
+
+function soundCover(name, onPlay, image = '') {
   const t = document.createElement('span');
   t.innerHTML = SOLID_PLAY;
   const go = h('span', { class: 'go' }, t.firstChild);
-  return h('div', {
+  const cover = h('div', {
     class: 'cover',
     style: `--h:${hueOf(name)}`,
     title: 'Play',
     onclick: (e) => { e.stopPropagation(); onPlay(); },
-  }, icon('bars'), go);
+  }, icon('bars'));
+  if (image) {
+    loadImage(image).then((url) => {
+      if (!url) return; // missing file: keep the generated cover
+      cover.prepend(h('img', { class: 'pic', src: url, alt: '', draggable: 'false' }));
+      cover.classList.add('has-pic');
+    });
+  }
+  cover.append(go);
+  return cover;
 }
 
 function renderSounds() {
@@ -202,27 +221,31 @@ function renderSounds() {
   };
   p.sounds.forEach((s, i) => {
     const n = s.files.length;
+    const fxName = s.fx && s.fx !== 'clean' ? (FX.find((f) => f[0] === s.fx) || [0, s.fx])[1] : '';
     list.append(
       h('div', {
         class: 'sound' + (i === p.selected_sound ? ' selected' : ''),
+        title: s.name || '',
         onclick: () => select(i),
         ondblclick: () => playSound(i),
       },
-        soundCover(s.name || s.files[0] || 'sound', () => { select(i); playSound(i); }),
-        h('div', { class: 'main' },
-          h('div', { class: 'name' }, s.name || '(no name)'),
-          h('div', { class: 'sub' }, keysBox(s.keys), h('span', {}, `${n} file${n === 1 ? '' : 's'}`)),
-          s.error ? h('div', { class: 'err' }, s.error) : null),
-        s.loop ? h('span', { class: 'tag', title: 'Loops until stopped' }, icon('loop')) : null,
-        h('span', { class: 'vol-pct' + (s.error ? ' warn' : '') }, `${s.volume}%`),
-        h('div', { class: 'acts' },
-          iconBtn('edit', 'Edit', () => openSoundDialog(clone(s), (d) => { p.sounds[i] = d; commit(); renderSounds(); })),
-          iconBtn('trash', 'Remove', () => {
-            p.sounds.splice(i, 1);
-            p.selected_sound = Math.max(0, Math.min(p.selected_sound, p.sounds.length - 1));
-            commit();
-            renderSounds();
-          }, 'danger'))));
+        h('div', { class: 'art' },
+          soundCover(s.name || s.files[0] || 'sound', () => { select(i); playSound(i); }, s.image),
+          h('div', { class: 'acts' },
+            iconBtn('edit', 'Edit', () => openSoundDialog(clone(s), (d) => { p.sounds[i] = d; commit(); renderSounds(); })),
+            iconBtn('trash', 'Remove', () => {
+              p.sounds.splice(i, 1);
+              p.selected_sound = Math.max(0, Math.min(p.selected_sound, p.sounds.length - 1));
+              commit();
+              renderSounds();
+            }, 'danger')),
+          h('div', { class: 'chips' },
+            fxName ? h('span', { class: 'chip', title: 'Sound effect' }, fxName) : null,
+            s.loop ? h('span', { class: 'chip', title: 'Loops until stopped' }, icon('loop')) : null,
+            h('span', { class: 'chip vol' + (s.error ? ' warn' : '') }, `${s.volume}%`))),
+        h('div', { class: 'name' }, s.name || '(no name)'),
+        h('div', { class: 'sub' }, keysBox(s.keys), h('span', {}, `${n} file${n === 1 ? '' : 's'}`)),
+        s.error ? h('div', { class: 'err', title: s.error }, s.error.replace(/\s+/g, ' ')) : null));
   });
 }
 
@@ -265,6 +288,22 @@ function openSoundDialog(d, onSave) {
     oninput: () => { d.volume = Number(vol.value); volLabel.textContent = `${d.volume}%`; },
   });
 
+  const pic = h('div', { class: 'pic-prev' });
+  const paintPic = () => {
+    pic.replaceChildren();
+    pic.classList.toggle('empty', !d.image);
+    if (!d.image) { pic.append(icon('bars')); return; }
+    loadImage(d.image).then((url) => {
+      if (!d.image) return;
+      pic.replaceChildren(url ? h('img', { src: url, alt: '' }) : h('span', { class: 'muted' }, 'Cannot read'));
+    });
+  };
+  paintPic();
+
+  const fxSelect = h('select', { onchange: () => { d.fx = fxSelect.value; } },
+    FX.map(([id, name]) => h('option', { value: id }, id === 'clean' ? 'None' : name)));
+  fxSelect.value = FX.some((f) => f[0] === d.fx) ? d.fx : 'clean';
+
   const body = [
     h('div', { class: 'field' }, h('label', {}, 'Name'),
       h('input', { type: 'text', value: d.name, oninput: (e) => { d.name = e.target.value; } })),
@@ -281,6 +320,16 @@ function openSoundDialog(d, onSave) {
     keysField('Keys', () => d.keys, (k) => { d.keys = k; }),
     h('div', { class: 'field' }, h('span', { class: 'label' }, 'Volume'),
       h('div', { class: 'inline' }, vol, volLabel)),
+    h('div', { class: 'field' }, h('span', { class: 'label' }, 'Picture'),
+      h('div', { class: 'pic-row' }, pic,
+        h('button', {
+          onclick: async () => {
+            const [f] = await pickFiles({ multiple: false, filters: IMAGE_FILTER });
+            if (f) { d.image = f; paintPic(); }
+          },
+        }, 'Choose picture…'),
+        h('button', { onclick: () => { d.image = ''; paintPic(); } }, 'Remove'))),
+    h('div', { class: 'field' }, h('label', {}, 'Sound effect'), fxSelect),
     switchRow('Loop', 'Play again and again until you stop it',
       h('input', { type: 'checkbox', checked: d.loop, onchange: (e) => { d.loop = e.target.checked; } })),
   ];
@@ -877,6 +926,8 @@ function openFx() {
         h('div', { class: 'set-row' }, status))),
     h('section', { class: 'set-section' },
       h('h4', {}, 'Effect'),
+      h('div', { class: 'fx-status', style: 'margin: -4px 2px 8px' },
+        'Effects for single sounds: Soundboard > edit a sound > Sound effect.'),
       h('div', { class: 'set-card', role: 'radiogroup', 'aria-label': 'Effect' }, grid)));
   $('#fx-body').scrollTop = 0;
   showView('fx');
@@ -910,7 +961,7 @@ function wire() {
 
   $('#sound-add').addEventListener('click', () => {
     const p = preset();
-    const fresh = { name: '', files: [], keys: [], volume: 100, loop: false, error: null };
+    const fresh = { name: '', files: [], keys: [], volume: 100, loop: false, fx: 'clean', image: '', error: null };
     openSoundDialog(fresh, (d) => { p.sounds.push(d); p.selected_sound = p.sounds.length - 1; commit(); renderSounds(); });
   });
 

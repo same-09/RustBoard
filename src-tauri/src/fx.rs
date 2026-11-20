@@ -50,6 +50,18 @@ pub fn active_index(on: bool, id: &str) -> u32 {
     }
 }
 
+/// How long an effect keeps ringing after the sound ends (echo, reverb), in ms.
+pub fn tail_ms(index: u32) -> u32 {
+    match IDS.get(index as usize).copied().unwrap_or("clean") {
+        "giant" => 3000,
+        "cave" => 2800,
+        "demon" => 1800,
+        "alien" => 600,
+        "robot" => 150,
+        _ => 0,
+    }
+}
+
 /// Build the chain for a preset index. 0 (or out of range) = empty chain = pass-through.
 /// Every real preset ends with a limiter, because distortion and reverb can get loud.
 pub fn build(index: u32, sr: u32) -> Chain {
@@ -106,6 +118,108 @@ pub fn build(index: u32, sr: u32) -> Chain {
     }
     v.push(Box::new(Limiter::new(sr, -1.0, 80.0)));
     Chain { effects: v }
+}
+
+// ---------- effects on a sound file ----------
+
+/// Runs an interleaved sample stream (a decoded sound file) through the effect, one chain per
+/// channel. Works in chunks of 512 frames. After the file ends it keeps going for `tail_ms`,
+/// so echo and reverb can ring out.
+pub struct FxStream<I: Iterator<Item = f32>> {
+    inner: I,
+    ended: bool,
+    ch: usize,
+    chains: Vec<Chain>,
+    planes: Vec<Vec<f32>>,
+    out: Vec<f32>,
+    pos: usize,
+    tail_left: usize,
+}
+
+const CHUNK_FRAMES: usize = 512;
+
+impl<I: Iterator<Item = f32>> FxStream<I> {
+    pub fn new(inner: I, index: u32, channels: u16, rate: u32) -> Self {
+        let ch = channels.max(1) as usize;
+        FxStream {
+            inner,
+            ended: false,
+            ch,
+            chains: (0..ch).map(|_| build(index, rate)).collect(),
+            planes: vec![Vec::with_capacity(CHUNK_FRAMES); ch],
+            out: Vec::with_capacity(CHUNK_FRAMES * ch),
+            pos: 0,
+            tail_left: (rate as usize * tail_ms(index) as usize) / 1000,
+        }
+    }
+
+    fn refill(&mut self) -> bool {
+        self.out.clear();
+        self.pos = 0;
+        for p in self.planes.iter_mut() {
+            p.clear();
+        }
+        let mut frames = 0;
+        while frames < CHUNK_FRAMES && !self.ended {
+            let mut got = 0;
+            for c in 0..self.ch {
+                match self.inner.next() {
+                    Some(s) => {
+                        self.planes[c].push(s);
+                        got += 1;
+                    }
+                    None => {
+                        self.ended = true;
+                        break;
+                    }
+                }
+            }
+            if got == 0 {
+                break;
+            }
+            for c in got..self.ch {
+                self.planes[c].push(0.0); // file ended inside a frame: pad it
+            }
+            frames += 1;
+        }
+        if self.ended {
+            // the file is over: feed silence while the tail rings
+            while frames < CHUNK_FRAMES && self.tail_left > 0 {
+                for p in self.planes.iter_mut() {
+                    p.push(0.0);
+                }
+                self.tail_left -= 1;
+                frames += 1;
+            }
+        }
+        if frames == 0 {
+            return false;
+        }
+        for (plane, chain) in self.planes.iter_mut().zip(self.chains.iter_mut()) {
+            if !chain.is_empty() {
+                chain.process(plane);
+            }
+        }
+        for f in 0..frames {
+            for c in 0..self.ch {
+                self.out.push(self.planes[c][f]);
+            }
+        }
+        true
+    }
+}
+
+impl<I: Iterator<Item = f32>> Iterator for FxStream<I> {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        if self.pos >= self.out.len() && !self.refill() {
+            return None;
+        }
+        let v = self.out[self.pos];
+        self.pos += 1;
+        Some(v)
+    }
 }
 
 // ---------- level ----------
@@ -537,6 +651,44 @@ mod tests {
         PitchShift::new(SR, 1.5, 45.0).process(&mut up);
         let r = crossings(&up[4800..]) as f64 / (base * (SR as f64 - 4800.0) / SR as f64);
         assert!((r - 1.5).abs() < 0.1, "up ratio {r}");
+    }
+
+    #[test]
+    fn tail_only_for_echo_and_reverb_presets() {
+        assert_eq!(tail_ms(0), 0);
+        assert_eq!(tail_ms(index_of("deep")), 0);
+        assert!(tail_ms(index_of("cave")) > 1000);
+    }
+
+    #[test]
+    fn stream_clean_is_a_copy_without_tail() {
+        let x = sine(300.0, 1500);
+        let y: Vec<f32> = FxStream::new(x.clone().into_iter(), 0, 1, SR).collect();
+        assert_eq!(y, x);
+    }
+
+    #[test]
+    fn stream_keeps_length_for_pitch_effects_and_adds_a_tail_for_echo() {
+        let x = sine(300.0, 1500);
+        let deep = FxStream::new(x.clone().into_iter(), index_of("deep"), 1, SR).count();
+        assert_eq!(deep, 1500);
+        let cave: Vec<f32> = FxStream::new(x.clone().into_iter(), index_of("cave"), 1, SR).collect();
+        assert_eq!(cave.len(), 1500 + (SR as usize * 2800) / 1000);
+        assert!(cave[1500 + 100..].iter().any(|s| s.abs() > 1e-4), "tail is silent");
+        assert!(cave.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn stream_stereo_keeps_the_channels_apart() {
+        // left = sine, right = silence
+        let mut inter = Vec::new();
+        for s in sine(300.0, 2000) {
+            inter.push(s);
+            inter.push(0.0);
+        }
+        let y: Vec<f32> = FxStream::new(inter.into_iter(), index_of("robot"), 2, SR).take(4000).collect();
+        assert!(y.iter().skip(1).step_by(2).all(|s| s.abs() < 1e-9), "right channel got sound");
+        assert!(y.iter().step_by(2).any(|s| s.abs() > 0.01));
     }
 
     #[test]
