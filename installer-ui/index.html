@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rustboard Setup</title>
+<style>
+/* Token = sama persis dengan ui/style.css Rustboard (Liner). Terang/gelap ikut sistem. */
+:root{
+  --bg-canvas:#e4e4e7;--bg-primary:#f5f5f7;--bg-glass:rgba(255,255,255,.55);--surface-glass:rgba(245,245,247,.92);
+  --border-primary:#e4e4e7;--border-a14:rgba(0,0,0,.06);--border-a33:rgba(0,0,0,.14);
+  --text-primary:#18181b;--text-secondary:rgba(0,0,0,.65);--text-tertiary:rgba(0,0,0,.45);
+  --accent:#ff3b3b;--ok:#16a34a;--btn-bg:#18181b;--btn-text:#fff;
+  --fill-subtle:rgba(0,0,0,.03);--fill:rgba(0,0,0,.05);--fill-hover:rgba(0,0,0,.08);--fill-strong:rgba(0,0,0,.1);
+  --amb-l:72%;--amb-a:.34;--r-control:8px;--r-item:12px;--ease:cubic-bezier(.22,1,.36,1);--hue:232;
+  --font:"SF Pro",-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",Inter,system-ui,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono","SF Mono",Consolas,monospace;color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg-canvas:#000;--bg-primary:#0a0a0a;--bg-glass:rgba(70,70,70,.2);--surface-glass:rgba(22,22,24,.9);
+  --border-primary:#1a1a1a;--border-a14:rgba(255,255,255,.08);--border-a33:rgba(255,255,255,.2);
+  --text-primary:#fff;--text-secondary:rgba(255,255,255,.7);--text-tertiary:rgba(255,255,255,.45);
+  --accent:#ff4d4d;--ok:#4ade80;--btn-bg:#d9d9dd;--btn-text:#000;
+  --fill-subtle:rgba(255,255,255,.04);--fill:rgba(255,255,255,.07);--fill-hover:rgba(255,255,255,.1);--fill-strong:rgba(255,255,255,.14);
+  --amb-l:42%;--amb-a:.32;color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg-canvas:#000;--bg-primary:#0a0a0a;--bg-glass:rgba(70,70,70,.2);--surface-glass:rgba(22,22,24,.9);
+  --border-primary:#1a1a1a;--border-a14:rgba(255,255,255,.08);--border-a33:rgba(255,255,255,.2);
+  --text-primary:#fff;--text-secondary:rgba(255,255,255,.7);--text-tertiary:rgba(255,255,255,.45);
+  --accent:#ff4d4d;--ok:#4ade80;--btn-bg:#d9d9dd;--btn-text:#000;
+  --fill-subtle:rgba(255,255,255,.04);--fill:rgba(255,255,255,.07);--fill-hover:rgba(255,255,255,.1);--fill-strong:rgba(255,255,255,.14);
+  --amb-l:42%;--amb-a:.32;color-scheme:dark}
+
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg-canvas);color:var(--text-primary);font:400 13px/1.4 var(--font);-webkit-font-smoothing:antialiased;overflow:hidden}
+*{user-select:none;scrollbar-width:none} input[type=text]{user-select:text}
+.ambient{position:fixed;inset:0;z-index:-1;pointer-events:none;transition:opacity .7s var(--ease);
+  background:radial-gradient(60% 55% at 14% -5%,hsl(var(--hue) 50% var(--amb-l)/var(--amb-a)),transparent 70%),
+             radial-gradient(55% 50% at 105% 105%,hsl(calc(var(--hue) + 55) 45% var(--amb-l)/calc(var(--amb-a)*.75)),transparent 70%)}
+button,input{font:inherit;color:inherit}
+button{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border:0;border-radius:var(--r-control);
+  background:var(--border-a14);font-size:13.5px;cursor:pointer;transition:background .15s,opacity .15s,transform .1s}
+button:hover{background:var(--border-a33)} button:active{transform:scale(.96)} button:disabled{opacity:.5;pointer-events:none}
+button.primary{background:var(--btn-bg);color:var(--btn-text);font-weight:600} button.primary:hover{background:var(--btn-bg);opacity:.88}
+button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+:focus-visible{outline:2px solid color-mix(in srgb,var(--text-primary) 70%,transparent);outline-offset:1px}
+input[type=text]{height:36px;min-width:0;padding:0 12px;border:1px solid var(--border-primary);border-radius:var(--r-control);background:var(--bg-primary);font-size:13.5px;outline:0;transition:border-color .15s}
+input[type=text]:hover,input[type=text]:focus{border-color:var(--border-a33)}
+input[type=checkbox]{appearance:none;position:relative;flex:none;width:38px;height:22px;margin:0;border-radius:99px;background:var(--fill-strong);cursor:pointer;transition:background .2s}
+input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:left .3s cubic-bezier(.34,1.3,.64,1),width .3s cubic-bezier(.34,1.3,.64,1)}
+input[type=checkbox]:checked{background:color-mix(in srgb,var(--text-primary) 38%,transparent)} input[type=checkbox]:checked::after{left:18px}
+input[type=checkbox]:active::after{width:22px} input[type=checkbox]:checked:active::after{left:14px}
+
+/* layout: rail + page, seperti jendela utama Rustboard */
+.app{height:100%;display:flex;gap:6px;padding:6px}
+.rail{align-self:stretch;width:52px;display:flex;flex-direction:column;align-items:center;gap:20px;padding:16px 0;border-radius:var(--r-item);background:var(--bg-glass);backdrop-filter:blur(20px)}
+.rail .logo svg{display:block;width:28px;height:21px;fill:var(--text-primary)}
+.steps{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.steps i{display:block;width:6px;height:6px;margin:0 auto;border-radius:99px;background:var(--fill-strong);transition:height .38s var(--ease),background .2s}
+.steps i.done{background:var(--text-tertiary)} .steps i.on{height:22px;background:var(--text-primary)}
+.page{flex:1;min-width:0;display:flex;flex-direction:column}
+.bar{flex:none;display:flex;align-items:center;gap:8px;height:46px;padding-bottom:8px}
+.island{display:inline-flex;align-items:center;height:38px;padding:0 14px;border-radius:10px;background:var(--bg-glass);backdrop-filter:blur(20px);font-size:14px;font-weight:600;letter-spacing:-.005em}
+.grow{flex:1}
+.x{width:38px;padding:0;background:var(--bg-glass);backdrop-filter:blur(20px);border-radius:10px;height:38px;color:var(--text-secondary)}
+.panel{flex:1;min-height:0;display:flex;flex-direction:column;padding:14px 8px 0;border-radius:14px 14px 0 0;background:var(--fill-subtle)}
+.view{flex:1;min-height:0;display:none;flex-direction:column;gap:12px;padding:6px 10px 10px;animation:in .38s var(--ease)}
+.view.on{display:flex}
+@keyframes in{from{opacity:0;transform:translateY(8px)}}
+h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.02em}
+.d{color:var(--text-tertiary);font-size:13px;line-height:18px;margin:0}
+.foot{flex:none;display:flex;align-items:center;gap:8px;padding:10px 6px 4px}
+.foot button{height:40px;padding:0 20px}
+.ver{color:var(--text-tertiary);font-size:12px;font-variant-numeric:tabular-nums}
+
+/* cover: sampul Liner (dasar gelap, dua cahaya, satu glyph) */
+.cover{position:relative;display:grid;place-items:center;width:72px;height:72px;border-radius:14px;color:rgba(255,255,255,.8);
+  background:radial-gradient(circle at 24% 20%,hsl(var(--hue) 75% 55%/.6),transparent 62%),radial-gradient(circle at 80% 85%,hsl(calc(var(--hue) + 45) 70% 50%/.5),transparent 58%),#101012}
+.cover svg{width:38px;height:28px;fill:currentColor}
+.hero{display:flex;flex-direction:column;justify-content:center;gap:12px;flex:1}
+.card{overflow:hidden;border-radius:var(--r-item);background:var(--fill)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:52px;padding:10px 16px}
+.row+.row{box-shadow:inset 0 1px 0 var(--border-a14)}
+.t{font-size:14px;font-weight:500;line-height:18px}.row .d{font-size:12px;line-height:17px;margin-top:2px}
+.inline{display:flex;gap:8px}.inline input{flex:1}
+.meta{display:flex;justify-content:space-between;color:var(--text-tertiary);font-size:12px;font-variant-numeric:tabular-nums}
+.bar-track{height:4px;border-radius:99px;background:var(--fill-strong);overflow:hidden}
+.bar-fill{height:100%;width:0;border-radius:99px;background:var(--text-primary);transition:width .25s var(--ease)}
+.log{font:12px/18px var(--mono);color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pct{font-size:44px;font-weight:700;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.check{display:grid;place-items:center;width:56px;height:56px;border-radius:50%;background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.check svg{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.err{color:var(--accent);font-size:12px;min-height:17px}
+@media (prefers-reduced-motion:reduce){*,::before,::after{animation-duration:1ms!important;transition-duration:1ms!important}}
+</style>
+</head>
+<body>
+<div class="ambient" id="amb"></div>
+<div class="app">
+  <aside class="rail">
+    <div class="logo"><svg viewBox="0 0 32 24"><rect x="1" y="9" width="4" height="6" rx="2"/><rect x="8" y="4" width="4" height="16" rx="2"/><rect x="15" y="0" width="4" height="24" rx="2"/><rect x="22" y="6" width="4" height="12" rx="2"/><rect x="29" y="10" width="3" height="4" rx="1.5"/></svg></div>
+    <div class="steps" id="steps"></div>
+  </aside>
+
+  <div class="page">
+    <header class="bar" data-tauri-drag-region>
+      <span class="island" id="title">Rustboard Setup</span>
+      <span class="grow" data-tauri-drag-region></span>
+      <button class="x" id="close" title="Batal" aria-label="Tutup"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </header>
+
+    <main class="panel">
+      <section class="view on" data-hue="232">
+        <div class="hero">
+          <div class="cover"><svg viewBox="0 0 32 24"><rect x="1" y="9" width="4" height="6" rx="2"/><rect x="8" y="4" width="4" height="16" rx="2"/><rect x="15" y="0" width="4" height="24" rx="2"/><rect x="22" y="6" width="4" height="12" rx="2"/><rect x="29" y="10" width="3" height="4" rx="1.5"/></svg></div>
+          <h2>Selamat datang di Rustboard</h2>
+          <p class="d">Pintasan keyboard global untuk memutar suara dan menghitung sesuatu (death, kill…) ke file teks untuk streaming. Setup ini memasang Rustboard dalam beberapa langkah singkat.</p>
+        </div>
+      </section>
+
+      <section class="view" data-hue="280">
+        <h2>Lokasi pemasangan</h2>
+        <p class="d">Rustboard dipasang untuk akun kamu saja. Tidak perlu hak admin.</p>
+        <div class="inline"><input type="text" id="dir" spellcheck="false"><button id="browse">Pilih…</button></div>
+        <div class="err" id="dir-err"></div>
+        <div class="meta"><span>Butuh sekitar 38 MB</span><span id="free">Ruang kosong: —</span></div>
+      </section>
+
+      <section class="view" data-hue="170">
+        <h2>Pilih opsi</h2>
+        <div class="card">
+          <label class="row"><div><div class="t">Shortcut di Desktop</div></div><input type="checkbox" id="o-desk" checked></label>
+          <label class="row"><div><div class="t">Shortcut di Start menu</div></div><input type="checkbox" id="o-menu" checked></label>
+          <label class="row"><div><div class="t">Jalan saat Windows mulai</div><div class="d">Pintasan langsung aktif tanpa buka aplikasi.</div></div><input type="checkbox" id="o-auto"></label>
+        </div>
+      </section>
+
+      <section class="view" data-hue="20">
+        <div class="hero">
+          <div class="pct" id="pct">0%</div>
+          <div class="bar-track"><div class="bar-fill" id="fill"></div></div>
+          <div class="log" id="log">Menyiapkan…</div>
+        </div>
+      </section>
+
+      <section class="view" data-hue="145">
+        <div class="hero">
+          <div class="check"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+          <h2>Rustboard sudah terpasang</h2>
+          <p class="d">Klik Selesai untuk menutup setup.</p>
+          <div class="card"><label class="row"><div class="t">Buka Rustboard sekarang</div><input type="checkbox" id="o-run" checked></label></div>
+        </div>
+      </section>
+
+      <div class="foot">
+        <span class="ver" id="ver">v1.0.0</span><span class="grow"></span>
+        <button id="back">Kembali</button>
+        <button class="primary" id="next">Lanjut</button>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const views = [...document.querySelectorAll('.view')];
+const T = window.__TAURI__;                         // ada di Tauri; kalau di browser = mock
+const call = (cmd, args) => T ? T.core.invoke(cmd, args) : mock(cmd, args);
+let step = 0, busy = false;
+
+// langkah: 0 datang, 1 lokasi, 2 opsi, 3 pasang, 4 selesai
+$('#steps').innerHTML = views.map(() => '<i></i>').join('');
+$('#dir').value = 'C:\\Users\\Kamu\\AppData\\Local\\Rustboard';
+$('#free').textContent = 'Ruang kosong: 212 GB';
+
+function show(n){
+  step = n;
+  views.forEach((v,i) => v.classList.toggle('on', i === n));
+  document.querySelectorAll('#steps i').forEach((d,i) => d.className = i < n ? 'done' : i === n ? 'on' : '');
+  document.documentElement.style.setProperty('--hue', views[n].dataset.hue);   // latar berganti warna per langkah
+  $('#back').style.visibility = (n === 0 || n >= 3) ? 'hidden' : 'visible';
+  $('#next').textContent = ['Lanjut','Lanjut','Pasang','Memasang…','Selesai'][n];
+  $('#next').disabled = n === 3;
+  $('#close').style.display = n === 4 ? 'none' : '';
+}
+
+async function install(){
+  show(3);
+  const opts = { dir: $('#dir').value.trim(), desktop: $('#o-desk').checked, startMenu: $('#o-menu').checked, autostart: $('#o-auto').checked };
+  const on = (p, msg) => { $('#pct').textContent = p + '%'; $('#fill').style.width = p + '%'; $('#log').textContent = msg; };
+  try {
+    if (T) await T.event.listen('install-progress', e => on(e.payload.percent, e.payload.message));
+    await call('install', opts, on);
+    on(100, 'Selesai'); setTimeout(() => show(4), 450);
+  } catch (e) { on(0, 'Gagal: ' + e); $('#log').style.color = 'var(--accent)'; $('#back').style.visibility = 'visible'; $('#back').onclick = () => { $('#log').style.color = ''; show(2); }; }
+}
+
+$('#next').onclick = () => {
+  if (step === 1 && !$('#dir').value.trim()) { $('#dir-err').textContent = 'Isi lokasi dulu.'; return; }
+  $('#dir-err').textContent = '';
+  if (step === 2) return install();
+  if (step === 4) return call('finish', { run: $('#o-run').checked });
+  show(step + 1);
+};
+$('#back').onclick = () => show(step - 1);
+$('#close').onclick = () => call('cancel');
+$('#browse').onclick = async () => { const d = await call('pick_dir'); if (d) $('#dir').value = d; };
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && !$('#next').disabled && document.activeElement.tagName !== 'BUTTON') $('#next').click(); });
+
+// mock untuk uji di browser (tanpa Tauri)
+function mock(cmd, args){
+  if (cmd === 'install') return new Promise(res => {
+    const msgs = ['Membuat folder…','Menyalin rustboard.exe','Menyalin ikon dan aset','Membuat shortcut','Menulis registry uninstall'];
+    let p = 0; const t = setInterval(() => { p = Math.min(99, p + 3 + Math.random()*6);
+      $('#pct').textContent = Math.round(p) + '%'; $('#fill').style.width = p + '%'; $('#log').textContent = msgs[Math.min(4, Math.floor(p/20))];
+      if (p >= 99) { clearInterval(t); res(); } }, 120);
+  });
+  if (cmd === 'pick_dir') return Promise.resolve('D:\\Apps\\Rustboard');
+  return Promise.resolve();
+}
+show(0);
+</script>
+</body>
+</html>
