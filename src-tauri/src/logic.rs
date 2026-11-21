@@ -82,15 +82,7 @@ pub fn on_key_down(app: &AppHandle, key: &str, pressed: &[String], first: bool) 
                 resolve(key, pressed, &list).map(|i| ids[i].clone())
             };
             if let Some(id) = hit {
-                if id == "clean" || (cfg.fx_on && cfg.fx_preset == id) {
-                    cfg.fx_on = false;
-                    if id == "clean" {
-                        cfg.fx_preset = id;
-                    }
-                } else {
-                    cfg.fx_preset = id;
-                    cfg.fx_on = true;
-                }
+                cfg.toggle_fx(&id);
                 state.send(AudioCmd::Configure(AudioSettings::from_config(&cfg)));
                 changed = true;
             }
@@ -115,6 +107,20 @@ pub fn on_key_up(app: &AppHandle, pressed: &[String]) {
 }
 
 impl Config {
+    /// Effect hotkey / phone button: effect on; the same one again = effects off.
+    /// "clean" always means off.
+    pub fn toggle_fx(&mut self, id: &str) {
+        if id == "clean" || (self.fx_on && self.fx_preset == id) {
+            self.fx_on = false;
+            if id == "clean" {
+                self.fx_preset = id.to_string();
+            }
+        } else {
+            self.fx_preset = id.to_string();
+            self.fx_on = true;
+        }
+    }
+
     pub fn preset_mut_selected(&mut self) -> &mut crate::config::Preset {
         let i = self.selected_preset;
         &mut self.presets[i]

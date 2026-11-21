@@ -28,6 +28,8 @@ def default_config():
         "secondary_device_volume": 100,
         "mic_volume": 100,
         "gate_on": False,
+        "duck_on": False,
+        "limiter_on": True,
         "gate_threshold_db": -50,
         "meters_on": True,
         "fx_on": False,
@@ -74,6 +76,8 @@ STATE = {"config": load_config()}
 def normalize(cfg):
     cfg.setdefault("live_output", "Auto (VB-Cable)")
     cfg.setdefault("gate_on", False)
+    cfg.setdefault("duck_on", False)
+    cfg.setdefault("limiter_on", True)
     cfg.setdefault("gate_threshold_db", -50)
     cfg.setdefault("meters_on", True)
     cfg.setdefault("fx_on", False)
@@ -124,7 +128,55 @@ def play_sound(args):
     except (IndexError, KeyError):
         raise ValueError("sound not found")
     print(f"[mock] play: {sound['name']} ({len(sound['files'])} file(s), loop={sound['loop']})")
+    if sound["files"]:
+        PLAYING["file"] = sound["files"][0]
+        PLAYING["until"] = time.time() + (3600 if sound.get("loop") else 4)
     return None
+
+
+PLAYING = {"file": "", "until": 0.0}
+
+
+def get_sound_level(_args):
+    """Fake music: five bands that bounce while the last played sound 'plays'."""
+    t = time.time()
+    on = t < PLAYING["until"]
+    bands = [0.0] * 5
+    if on:
+        beat = max(0.0, math.sin(t * 7.0)) ** 3
+        for i in range(5):
+            wobble = 0.5 + 0.5 * math.sin(t * (5 + 3 * i) + i * 1.7)
+            base = (0.28 if i == 0 else 0.12 / (1 + i * 0.4)) * (0.35 + 0.65 * (beat if i < 2 else wobble))
+            bands[i] = base
+    return {"file": PLAYING["file"], "bands": bands}
+
+
+AUDIO_EXT = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".aiff", ".aif")
+MOCK_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mock-Soundboard")
+
+
+def _mock_import(paths):
+    files, skipped = [], 0
+    for p in paths:
+        if p.lower().endswith(AUDIO_EXT):
+            files.append({"path": p, "name": os.path.splitext(os.path.basename(p))[0]})
+        else:
+            skipped += 1
+    return {"files": files, "skipped": skipped, "folder": MOCK_FOLDER}
+
+
+def import_files(args):
+    return _mock_import(args.get("paths", []))
+
+
+def import_folder(args):
+    folder = args.get("folder", "")
+    if not os.path.isdir(folder):
+        raise ValueError("Cannot read folder '%s'." % folder)
+    found = sorted(os.path.join(r, f) for r, _d, fs in os.walk(folder) for f in fs if f.lower().endswith(AUDIO_EXT))
+    if not found:
+        raise ValueError("No sound files in this folder (mp3, wav, ogg, flac, m4a, aac, aiff).")
+    return _mock_import(found)
 
 
 def make_noop(label):
@@ -179,6 +231,10 @@ def image_data(args):
 COMMANDS = {
     "image_data": image_data,
     "get_levels": get_levels,
+    "import_files": import_files,
+    "import_folder": import_folder,
+    "open_soundboard_folder": make_noop("open Soundboard folder"),
+    "get_sound_level": get_sound_level,
     "get_state": get_state,
     "set_config": set_config,
     "select_preset": select_preset,

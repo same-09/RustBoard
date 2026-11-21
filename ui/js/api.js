@@ -35,3 +35,12 @@ export async function pickFiles({ multiple = false, filters = [] } = {}) {
   if (!text) return [];
   return text.split('\n').map((s) => s.trim()).filter(Boolean);
 }
+
+// Pick a folder. Returns its path, or '' if the user cancels.
+export async function pickFolder() {
+  if (isTauri) {
+    const r = await T.dialog.open({ directory: true, multiple: false });
+    return typeof r === 'string' ? r : '';
+  }
+  return (window.prompt('Mock mode (no folder dialog). Enter a folder path:') || '').trim();
+}
