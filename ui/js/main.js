@@ -742,6 +742,7 @@ $('#bind-cancel').addEventListener('click', () => bindDlg.close());
 
 const AUTO_CABLE = 'Auto (VB-Cable)';
 const CABLE_URL = 'https://vb-audio.com/Cable/';
+const REPO_URL = 'https://github.com/same-09/RustBoard/';
 let live = false;
 
 function renderLive() {
@@ -1098,6 +1099,10 @@ function buildSettings() {
       shortcut('Pause all', ss.pause),
       shortcut('Continue', ss.continue),
       shortcut('Stop all', ss.stop)),
+    h('div', { class: 'credit' },
+      'Based on Rustboard by ',
+      h('button', { class: 'credit-link', onclick: () => call('open_url', { url: REPO_URL }).catch(() => copy(REPO_URL)) }, 'same-09'),
+      ' · MIT + credit'),
   ];
 
   $('#settings-body').replaceChildren(...body);

@@ -1,4 +1,4 @@
-//! Mic sound effects (voice changer). Port of Voicefork's effects.py + presets.py.
+//! Mic sound effects (voice changer).
 //!
 //! Every effect keeps its own state, so a block can have any length and the block edges
 //! are not audible. Nothing here allocates inside `process`, so it is safe in the audio callback.

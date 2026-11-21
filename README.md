@@ -138,7 +138,7 @@ Tab **Sound Effects** (kolom kiri) mengubah suara mic secara langsung. Efek berj
 - Pilih satu kartu efek untuk menyalakannya. Matikan lewat saklar **Sound effects** di atas, atau pilih **Clean**. Tiap kartu punya baris hotkey sendiri.
 - Efek pitch menambah jeda sekitar 20 sampai 30 ms.
 - **Efek per sound:** edit sebuah sound > **Sound effect**. Gema dan reverb tetap bunyi sebentar setelah file selesai. Efek sound tidak bergantung pada efek mic.
-- Algoritma efek diport dari proyek Voicefork ke Rust (`src-tauri/src/fx.rs`) dan punya tes sendiri.
+- Efek ada di `src-tauri/src/fx.rs` dan punya tes sendiri.
 
 ## Noise gate dan meter
 
@@ -222,14 +222,7 @@ cargo tauri dev        # jalankan
 cargo tauri build      # installer
 ```
 
-**Rilis** (tanpa kunci, tanpa secret):
-
-```
-git tag v0.0.1
-git push origin v0.0.1
-```
-
-Workflow `.github/workflows/build.yml` membangun `Rustboard_x.y.z_x64-setup.exe` dan melampirkannya ke GitHub Release. Push ke `main` hanya menguji build. Tag yang sama juga membangun APK Android.
+Workflow `.github/workflows/build.yml` membangun `Rustboard_x.y.z_x64-setup.exe`. Tag `v*` melampirkannya ke GitHub Release, dan tag yang sama juga membangun APK Android. Push ke `main` hanya menguji build.
 
 **Update dalam app:** saat mulai, app bertanya ke GitHub soal Release terbaru. Kalau lebih baru, sebuah bar menulis "New version ... is available" dengan tombol **Update**. App mengunduh setup dari Release kita sendiri (SHA-256 dicek kalau GitHub memberikannya), menjalankannya, lalu keluar. Tidak ada tanda tangan, jadi kepercayaan hanya dari HTTPS dan repo GitHub kita.
 
@@ -292,4 +285,19 @@ Mic passthrough butuh perangkat audio 32-bit float. Mic dan output boleh punya s
 
 ## Terima kasih
 
-Rustboard adalah port dari aplikasi Rustboard C# / WPF yang lama ke Rust. Algoritma efek suara datang dari proyek Voicefork. [VB-CABLE](https://vb-audio.com/Cable/) dari VB-Audio dipakai untuk mengirim suara ke Discord.
+Rustboard adalah port dari aplikasi Rustboard C# / WPF yang lama ke Rust. [VB-CABLE](https://vb-audio.com/Cable/) dari VB-Audio dipakai untuk mengirim suara ke Discord.
+
+## Lisensi dan kredit
+
+Rustboard memakai [lisensi MIT + kredit wajib](LICENSE). Hak cipta © 2026 [same-09](https://github.com/same-09).
+
+**Kredit wajib.** Kalau kamu memakai, mengubah, mem-fork, atau membagikan proyek ini, kamu harus menampilkan kredit ini dengan jelas:
+
+> Based on Rustboard by same-09 - <https://github.com/same-09/RustBoard>
+
+- Taruh di README atau dokumentasi hasil karyamu.
+- Kalau hasil karyamu dibagikan ke orang lain, taruh juga di dalam aplikasinya (misalnya di Settings atau About) dan di halaman unduhnya.
+- Dilarang menghapus, menyembunyikan, atau mengganti kredit, dan dilarang mengaku ini karyamu sendiri.
+- Dipakai pribadi tanpa dibagikan tidak perlu kredit.
+
+Sertakan juga file `LICENSE`. Repo asli: <https://github.com/same-09/RustBoard>.
