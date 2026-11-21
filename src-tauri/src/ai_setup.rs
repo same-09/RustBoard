@@ -347,7 +347,10 @@ fn python_cmd(p: &Paths) -> Command {
 
 fn pip_install(p: &Paths, step: usize, args: &[&str], cancel: &AtomicBool) -> Result<(), String> {
     let mut c = python_cmd(p);
-    c.args(["-m", "pip", "install", "--no-warn-script-location", "--disable-pip-version-check", "--progress-bar", "off"]);
+    // `raw` prints `Progress <bytes done> of <bytes total>` lines we can read (the pip from
+    // get-pip is new enough). Elsewhere the venv pip may be old, so stay with `off`.
+    let bar = if cfg!(windows) { "raw" } else { "off" };
+    c.args(["-m", "pip", "install", "--no-warn-script-location", "--disable-pip-version-check", "--progress-bar", bar]);
     c.args(args);
     run_logged(c, step, false, cancel)
 }
@@ -511,8 +514,46 @@ fn json_error(lines: &VecDeque<String>) -> Option<String> {
     })
 }
 
+/// pip `--progress-bar raw`: `Progress <bytes done> of <bytes total>`.
+fn parse_pip_progress(l: &str) -> Option<(u64, u64)> {
+    let r = l.trim().strip_prefix("Progress ")?;
+    let (a, b) = r.split_once(" of ")?;
+    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+}
+
+/// `Downloading torch-2.7.1%2Bcu128-cp312-cp312-win_amd64.whl (3273.0 MB)` -> ("torch 2.7.1+cu128", 3273.0).
+fn parse_pip_download(l: &str) -> Option<(String, f32)> {
+    let r = l.trim().strip_prefix("Downloading ")?;
+    let (file, size) = r.rsplit_once(" (")?;
+    let (num, unit) = size.strip_suffix(')')?.split_once(' ')?;
+    let n: f32 = num.parse().ok()?;
+    let mb = match unit {
+        "kB" => n / 1024.0,
+        "MB" => n,
+        "GB" => n * 1024.0,
+        _ => return None,
+    };
+    let file = file.rsplit('/').next().unwrap_or(file).replace("%2B", "+").replace("%2b", "+");
+    let mut parts = file.split('-');
+    let name = parts.next().unwrap_or("");
+    let name = match parts.next() {
+        Some(ver) if !ver.is_empty() => format!("{name} {ver}"),
+        _ => name.to_string(),
+    };
+    Some((name, mb))
+}
+
+fn fmt_mb(mb: f32) -> String {
+    if mb >= 1024.0 {
+        format!("{:.1} GB", mb / 1024.0)
+    } else {
+        format!("{:.0} MB", mb)
+    }
+}
+
 /// Run a program, show its last output line, stop it when `cancel` is set.
-/// The bar moves a little with every line (we cannot know how long pip will take).
+/// The bar moves a little with every line. With pip on Windows it follows the real download
+/// (bytes done / bytes of every file pip announced so far) and never goes back.
 fn run_logged(mut cmd: Command, step: usize, json_result: bool, cancel: &AtomicBool) -> Result<(), String> {
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
@@ -547,6 +588,8 @@ fn run_logged(mut cmd: Command, step: usize, json_result: bool, cancel: &AtomicB
 
     let mut tail: VecDeque<String> = VecDeque::with_capacity(32);
     let mut count: u32 = 0;
+    let (mut seen_mb, mut done_mb, mut cur_mb, mut best) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let mut cur_name = String::new();
     loop {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
@@ -555,13 +598,37 @@ fn run_logged(mut cmd: Command, step: usize, json_result: bool, cancel: &AtomicB
         }
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(line) => {
-                if line.trim().is_empty() {
+                if line.trim().is_empty() || line.contains(".metadata (") {
+                    continue;
+                }
+                // Progress of the file pip is downloading now (not kept in `tail`).
+                if let Some((got, total)) = parse_pip_progress(&line) {
+                    if total > 1_048_576 {
+                        let (got_mb, total_mb) = (got as f32 / 1_048_576.0, total as f32 / 1_048_576.0);
+                        if (total_mb - cur_mb).abs() > 0.5 {
+                            seen_mb += total_mb - cur_mb;
+                            cur_mb = total_mb;
+                        }
+                        best = best.max(((done_mb + got_mb) / seen_mb.max(1.0)).clamp(0.0, 0.99));
+                        progress(step, best, &format!("Downloading {cur_name}: {} of {}", fmt_mb(got_mb), fmt_mb(total_mb)));
+                    }
                     continue;
                 }
                 count += 1;
-                // 1 - 1/(1+n/10): moves with every line, never reaches the end of the step
-                let frac = 1.0 - 1.0 / (1.0 + count as f32 / 10.0);
-                progress(step, frac, &line);
+                if let Some((name, mb)) = parse_pip_download(&line) {
+                    done_mb += cur_mb;
+                    cur_mb = mb;
+                    seen_mb += mb;
+                    cur_name = name;
+                    best = best.max((done_mb / seen_mb.max(1.0)).clamp(0.0, 0.99));
+                    progress(step, best, &format!("Downloading {cur_name} ({})", fmt_mb(mb)));
+                } else {
+                    if seen_mb == 0.0 {
+                        // 1 - 1/(1+n/10): moves with every line, never reaches the end of the step
+                        best = best.max(1.0 - 1.0 / (1.0 + count as f32 / 10.0));
+                    }
+                    progress(step, best, &line);
+                }
                 if tail.len() == 32 {
                     tail.pop_front();
                 }
@@ -777,5 +844,29 @@ mod tests {
             assert_eq!(e, "Cancelled.");
         });
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+}
+
+#[cfg(test)]
+mod pip_parse_tests {
+    use super::*;
+
+    #[test]
+    fn reads_pip_raw_progress() {
+        assert_eq!(parse_pip_progress("Progress 1048576 of 3432000000"), Some((1_048_576, 3_432_000_000)));
+        assert_eq!(parse_pip_progress("Collecting torch==2.7.1"), None);
+    }
+
+    #[test]
+    fn reads_what_pip_downloads() {
+        let (n, mb) = parse_pip_download("  Downloading torch-2.7.1%2Bcu128-cp312-cp312-win_amd64.whl (3273.0 MB)").unwrap();
+        assert_eq!(n, "torch 2.7.1+cu128");
+        assert!((mb - 3273.0).abs() < 0.01);
+        let (n, mb) = parse_pip_download("Downloading https://x.org/whl/cu128/numpy-2.1.0-cp312-cp312-win_amd64.whl (12.8 MB)").unwrap();
+        assert_eq!(n, "numpy 2.1.0");
+        assert!((mb - 12.8).abs() < 0.01);
+        assert!(parse_pip_download("Collecting numpy").is_none());
+        assert_eq!(fmt_mb(3273.0), "3.2 GB");
+        assert_eq!(fmt_mb(12.8), "13 MB");
     }
 }

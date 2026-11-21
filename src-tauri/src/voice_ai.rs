@@ -95,7 +95,9 @@ fn write_script(work: &Path) -> Result<PathBuf, String> {
 /// `work` = `Documents/RustBoard`.
 pub fn locate(configured: &str, work: &Path) -> Result<Engine, String> {
     let configured = configured.trim();
-    if configured.is_empty() && crate::ai_setup::installed(work) {
+    // The engine Rustboard installed wins when no folder is picked, or when the picked folder
+    // is not an engine folder (for example an old one).
+    if crate::ai_setup::installed(work) && (configured.is_empty() || !is_root(Path::new(configured))) {
         let p = crate::ai_setup::paths(work);
         crate::ai_setup::write_code(&p.code)?; // the code in this version of Rustboard
         let script = write_script(work)?;

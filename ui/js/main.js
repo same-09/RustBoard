@@ -1198,22 +1198,23 @@ function aiVoiceSection() {
   };
 
   const paintInstall = () => {
-    const ready = !!ai && ai.engine_ready;
+    const ready = (!!ai && ai.engine_ready) || justDone; // just installed = ready, even before the status refresh
+    const own = (!!ai && ai.engine_own) || justDone;
     const cuda = !!ai && ai.gpu.vram_mb > 0; // nvidia-smi found a card
-    instRow.hidden = !(inst.running || inst.error || justDone);
-    instFill.style.width = `${inst.running ? inst.percent : justDone ? 100 : 0}%`;
+    instRow.hidden = !(inst.running || inst.error); // nothing to show once it is installed
+    instFill.style.width = `${inst.running ? inst.percent : 0}%`;
     instText.classList.toggle('warn', !!inst.error && inst.error !== 'Cancelled.');
     instText.textContent = inst.running
-      ? `Step ${inst.step} of ${inst.steps}: ${inst.title}${inst.line ? ` — ${inst.line}` : ''}`
+      ? `${inst.percent}% — ${inst.line || inst.title}`
       : inst.error ? (inst.error === 'Cancelled.' ? 'Cancelled. Press Install AI voice to continue where it stopped.' : `Install failed: ${inst.error}`)
-        : justDone ? 'Done. The AI voice engine is ready ✓' : '';
-    instDesc.textContent = ready && ai.engine_own
+        : '';
+    instDesc.textContent = ready && own
       ? 'Installed by Rustboard in Documents/RustBoard/AI. Remove it if you want the space back (several GB). Your voices stay.'
       : `Rustboard installs the engine for you: its own Python, PyTorch and the base models, inside Documents/RustBoard/AI. About ${cuda ? '3.5' : '0.8'} GB to download, 5 to 15 minutes. No separate engine download and no .bat file needed.`;
     const btns = [];
     if (inst.running) {
       btns.push(h('button', { onclick: () => call('ai_install_cancel').catch(() => {}) }, 'Cancel'));
-    } else if (ready && ai.engine_own) {
+    } else if (ready && own) {
       btns.push(h('button', { onclick: removeEngine }, 'Remove engine'));
     } else {
       btns.push(h('button', { class: 'primary', onclick: startInstall }, ready ? 'Install AI voice instead' : 'Install AI voice'));
@@ -1227,6 +1228,7 @@ function aiVoiceSection() {
       inst = await call('ai_install_status');
       if (was && !inst.running) {
         clearInterval(instTimer); instTimer = null;
+        if (inst.done && cfg.ai_engine_dir) { cfg.ai_engine_dir = ''; commit(); await sync(); } // use the engine we just installed
         try { ai = await call('ai_status'); } catch (_) { /* keep the old status */ }
         justDone = !!inst.done;
         if (inst.done) toast('The AI voice engine is installed.');

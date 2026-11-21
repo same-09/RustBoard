@@ -280,8 +280,10 @@ def ai_install_status(_args):
     pct, before = frac * 100, 0
     for i, (title, share) in enumerate(_INSTALL_STEPS):
         if pct < before + share:
-            return dict(idle, running=True, step=i + 1, title=title, percent=int(pct),
-                        line="Collecting package %d ..." % int((pct - before) * 3))
+            sub = (pct - before) / share
+            line = ("Downloading torch 2.7.1+cu128: %.1f GB of 3.2 GB" % (sub * 3.2) if "PyTorch" in title
+                    else "Collecting package %d ..." % int((pct - before) * 3))
+            return dict(idle, running=True, step=i + 1, title=title, percent=int(pct), line=line)
         before += share
     return idle
 
