@@ -150,6 +150,8 @@ Di tab **Sound Effects**, bagian paling atas. Ini mengubah suaramu menjadi suara
 - Suara disalin ke `Documents/RustBoard/Voices/`, satu folder per suara. **Remove** menghapus salinan itu saja, bukan file unduhanmu.
 - Pakai suara yang kamu punya hak untuk dipakai. Jangan berpura-pura jadi orang sungguhan tanpa izin mereka.
 
+**Test voice.** Di bagian AI Voice ada baris **Test voice**. Pilih satu suara dengan **Use**, tekan tombolnya, lalu bicara 4 detik ke mic yang kamu pilih di Settings. Setelah itu kamu bisa putar **My voice** (rekamanmu, untuk cek mic) dan **New voice** (hasil suara baru). Rustboard juga mengukur waktu konversi: kalau 4 detik suara selesai diubah jauh di bawah 4 detik, PC-mu cukup cepat untuk live (**Fast**), mendekati 4 detik berarti **Tight**, lebih lama berarti **Too slow**. Klip diputar lewat Primary output seperti sound biasa, jadi tombol ini mati saat **Go Live** menyala supaya tesmu tidak masuk Discord. Selama mesin belum ada, hasilnya menulis alasan itu dan hanya **My voice** yang bisa diputar. Kode: `src-tauri/src/voice_test.rs`; mesin nanti dipasang di `voice_ai::convert`.
+
 **Status:** pengecekan GPU, peringatan, impor, pilih, dan hapus suara sudah jalan. **Mesin konversi suara real-time belum ada di versi ini** (`ENGINE_READY = false` di `src-tauri/src/voice_ai.rs`), jadi menyalakan saklar belum mengubah suara. Aplikasi menulis ini di layar.
 
 ## Noise gate dan meter

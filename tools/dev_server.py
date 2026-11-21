@@ -256,6 +256,18 @@ def voice_import(args):
     return voice
 
 
+def ai_test(args):
+    # real app: 4 s of mic + conversion. Mock: RB_MOCK_ENGINE=1 pretends the engine works.
+    import time
+    time.sleep(float(os.environ.get("RB_MOCK_TEST_SECS", "4.5")))
+    if os.environ.get("RB_MOCK_ENGINE") == "1":
+        return {"original": True, "converted": True, "error": None, "recorded_secs": 4.0, "convert_secs": 2.9,
+                "speed": 0.73, "verdict": "tight", "peak_db": -12.0}
+    return {"original": True, "converted": False,
+            "error": "The live voice engine is not in this version yet, so the voice cannot be changed. Your recording still works.",
+            "recorded_secs": 4.0, "convert_secs": 0.0, "speed": 0.0, "verdict": "", "peak_db": -12.0}
+
+
 def voice_remove(args):
     _VOICES[:] = [v for v in _VOICES if v["id"] != args["id"]]
 
@@ -265,6 +277,8 @@ COMMANDS = {
     "voice_list": voice_list,
     "voice_import": voice_import,
     "voice_remove": voice_remove,
+    "ai_test": ai_test,
+    "ai_test_play": make_noop("play test clip"),
     "image_data": image_data,
     "get_levels": get_levels,
     "import_files": import_files,

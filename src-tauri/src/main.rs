@@ -11,6 +11,7 @@ mod links;
 mod logic;
 mod remote;
 mod voice_ai;
+mod voice_test;
 mod state;
 mod updater;
 
@@ -242,6 +243,26 @@ fn voice_remove(app: tauri::AppHandle, state: State<'_, AppState>, id: String) -
     voice_ai::remove(&voices_dir(&app, &state), &id)
 }
 
+/// "Test voice": listen to the mic for a few seconds, change the voice, time it.
+/// Takes 4 seconds or more, so it runs on a worker thread.
+#[tauri::command(async)]
+fn ai_test(app: tauri::AppHandle, state: State<'_, AppState>, voice: String) -> Result<voice_test::TestOut, String> {
+    let dir = voice_ai::path(&voices_dir(&app, &state), &voice)?;
+    let mic = state.config.lock().map_err(|e| e.to_string())?.mic_input.clone();
+    voice_test::run(&dir, &mic)
+}
+
+/// Play one of the two test clips ("original" or "converted") like a sound.
+#[tauri::command]
+fn ai_test_play(state: State<'_, AppState>, which: String) -> Result<(), String> {
+    let path = voice_test::clip_path(&which).ok_or_else(|| "Unknown clip.".to_string())?;
+    if !path.is_file() {
+        return Err("Press Test voice first.".into());
+    }
+    state.send(AudioCmd::Play { file: path.to_string_lossy().into_owned(), volume: 1.0, looped: false, fx: 0 });
+    Ok(())
+}
+
 /// Show the Soundboard folder in the file manager.
 #[tauri::command]
 fn open_soundboard_folder(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
@@ -336,6 +357,8 @@ fn main() {
             voice_list,
             voice_import,
             voice_remove,
+            ai_test,
+            ai_test_play,
             select_preset,
             play_sound,
             audio_pause,

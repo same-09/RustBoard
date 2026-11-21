@@ -822,7 +822,7 @@ fn find_output(host: &cpal::Host, name: &str) -> Option<cpal::Device> {
         .find(|d| d.name().map(|n| n == name).unwrap_or(false))
 }
 
-fn find_input(host: &cpal::Host, name: &str) -> Option<cpal::Device> {
+pub fn find_input(host: &cpal::Host, name: &str) -> Option<cpal::Device> {
     if name == DEFAULT_IN {
         return host.default_input_device();
     }

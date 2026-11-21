@@ -16,6 +16,24 @@ pub const FOLDER: &str = "Voices";
 /// Set to true when the live converter is built in.
 pub const ENGINE_READY: bool = false;
 
+/// What the engine hands back: mono audio and its sample rate.
+pub struct Converted {
+    pub samples: Vec<f32>,
+    pub rate: u32,
+}
+
+pub const ENGINE_MISSING: &str =
+    "The live voice engine is not in this version yet, so the voice cannot be changed. Your recording still works.";
+
+/// Turn recorded mono audio into the voice stored in `voice_dir`.
+/// This is the ONE place the real converter plugs in; the Test voice button calls it.
+pub fn convert(_voice_dir: &Path, _samples: &[f32], _rate: u32) -> Result<Converted, String> {
+    if !ENGINE_READY {
+        return Err(ENGINE_MISSING.into());
+    }
+    Err("The voice engine is switched on but not connected here yet.".into())
+}
+
 /// Below this much video memory, live conversion is likely to stutter.
 const MIN_VRAM_MB: u32 = 6000;
 /// What we keep from a zip. Everything else (images, readme, ...) is ignored.
@@ -218,6 +236,19 @@ pub fn import(dir: &Path, src: &Path) -> Result<Voice, String> {
     list(dir).into_iter().find(|v| v.id == id).ok_or_else(|| "Import failed.".to_string())
 }
 
+/// Folder of one imported voice (checks the name and that it exists).
+pub fn path(dir: &Path, id: &str) -> Result<std::path::PathBuf, String> {
+    if !valid_id(id) {
+        return Err("Pick a voice first.".into());
+    }
+    let p = dir.join(id);
+    if p.is_dir() {
+        Ok(p)
+    } else {
+        Err("This voice is gone. Import it again.".into())
+    }
+}
+
 pub fn remove(dir: &Path, id: &str) -> Result<(), String> {
     if !valid_id(id) {
         return Err("Bad voice name.".into());
@@ -258,6 +289,13 @@ mod tests {
         assert!(!valid_id("../x"));
         assert!(!valid_id(""));
         assert!(!valid_id("a/b"));
+    }
+
+    #[test]
+    fn convert_says_why_while_there_is_no_engine() {
+        let r = convert(Path::new("x"), &[0.0; 16], 16_000);
+        assert_eq!(r.err().as_deref(), Some(ENGINE_MISSING));
+        assert!(path(&std::env::temp_dir(), "..").is_err());
     }
 
     #[test]

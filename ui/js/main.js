@@ -1170,6 +1170,7 @@ function aiVoiceSection() {
             h('button', { onclick: () => removeVoice(v) }, 'Remove')));
       })
       : [h('div', { class: 'set-row' }, h('div', { class: 'fx-status' }, 'No voices yet. Get one on voice-models.com, then press Import voice.'))]));
+    paintTest();
   };
 
   const turnOn = () => { cfg.ai_voice_on = true; commit(); paint(); };
@@ -1226,6 +1227,78 @@ function aiVoiceSection() {
   const openSite = () => call('open_url', { url: VOICE_SITE })
     .catch(() => navigator.clipboard.writeText(VOICE_SITE).then(() => toast('Link copied.'), () => toast(VOICE_SITE)));
 
+  // ---- Test voice: record a few seconds, hear yourself, hear the new voice, see the speed ----
+  const TEST_SECONDS = 4;
+  let testing = false;
+  let testStep = '';
+  const testHint = h('div', { class: 'd' });
+  const testResult = h('div', { class: 'fx-status' });
+  const clipBtns = h('div', { class: 'ctl' });
+  const resRow = h('div', { class: 'set-row' }, h('div', { class: 'stack' }, testResult), clipBtns);
+  resRow.hidden = true;
+  const testBtn = h('button', { class: 'primary', onclick: () => runTest() }, 'Test voice');
+  const haveVoice = () => voices.some((v) => v.id === cfg.ai_voice);
+
+  const paintTest = () => {
+    testBtn.disabled = testing || !haveVoice() || live;
+    testHint.textContent = testing ? testStep
+      : live ? 'Stop Go Live first. The test plays on your Primary output and would reach Discord.'
+        : !haveVoice() ? 'Pick a voice with Use first.'
+          : `Speak for ${TEST_SECONDS} seconds. Then you hear your own voice and the new voice.`;
+  };
+
+  const playClip = (which, label) => h('button', {
+    onclick: () => call('ai_test_play', { which }).catch((e) => toast(String(e), true)),
+  }, icon('play'), label);
+
+  const showTest = (r) => {
+    clipBtns.replaceChildren(playClip('original', 'My voice'), ...(r.converted ? [playClip('converted', 'New voice')] : []));
+    const said = {
+      fast: 'Fast enough for live ✓',
+      tight: 'Tight. Live may lag when your game is busy.',
+      slow: 'Too slow for live. Expect lag and dropped frames.',
+    };
+    testResult.textContent = r.converted
+      ? `Changed ${r.recorded_secs.toFixed(1)} s of voice in ${r.convert_secs.toFixed(1)} s (${r.speed.toFixed(2)}× real time). ${said[r.verdict] || ''}`
+      : (r.error || 'The voice could not be changed.');
+    testResult.classList.toggle('warn', !r.converted || r.verdict === 'slow');
+    resRow.hidden = false;
+  };
+
+  const runTest = async () => {
+    if (testing) return;
+    testing = true;
+    resRow.hidden = true;
+    let left = TEST_SECONDS;
+    testStep = `Speak now… ${left}`;
+    testBtn.textContent = 'Listening…';
+    paintTest();
+    const timer = setInterval(() => {
+      left -= 1;
+      if (left > 0) {
+        testStep = `Speak now… ${left}`;
+      } else {
+        clearInterval(timer);
+        testStep = 'Changing your voice…';
+        testBtn.textContent = 'Working…';
+      }
+      paintTest();
+    }, 1000);
+    try {
+      showTest(await call('ai_test', { voice: cfg.ai_voice }));
+    } catch (e) {
+      clipBtns.replaceChildren();
+      testResult.textContent = String(e);
+      testResult.classList.add('warn');
+      resRow.hidden = false;
+    } finally {
+      clearInterval(timer);
+      testing = false;
+      testBtn.textContent = 'Test voice';
+      paintTest();
+    }
+  };
+
   paint();
   call('ai_status').then((r) => { ai = r; paint(); }).catch(() => { ai = { gpu: { name: '', vram_mb: 0, level: 'none' }, engine_ready: false }; paint(); });
   call('voice_list').then((r) => { voices = r; paint(); }).catch(() => {});
@@ -1240,6 +1313,10 @@ function aiVoiceSection() {
         h('div', { class: 'ctl' }, sw)),
       h('div', { class: 'set-row' }, h('div', { class: 'stack' }, gpuLine, engineLine)),
       list,
+      h('div', { class: 'set-row' },
+        h('div', { class: 'txt' }, h('div', { class: 't' }, 'Test voice'), testHint),
+        h('div', { class: 'ctl' }, testBtn)),
+      resRow,
       h('div', { class: 'set-row' },
         h('div', { class: 'txt' }, h('div', { class: 'd' }, 'Download a voice from voice-models.com, then import the .zip here.')),
         h('div', { class: 'ctl' },
