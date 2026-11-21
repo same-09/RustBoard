@@ -33,6 +33,8 @@ def default_config():
         "gate_threshold_db": -50,
         "meters_on": True,
         "fx_on": False,
+        "ai_voice_on": False,
+        "ai_voice": "",
         "fx_preset": "clean",
         "overlap": False,
         "primary_output": "Default Output Device",
@@ -81,6 +83,8 @@ def normalize(cfg):
     cfg.setdefault("gate_threshold_db", -50)
     cfg.setdefault("meters_on", True)
     cfg.setdefault("fx_on", False)
+    cfg.setdefault("ai_voice_on", False)
+    cfg.setdefault("ai_voice", "")
     cfg.setdefault("fx_preset", "clean")
     cfg["gate_threshold_db"] = max(-70, min(-20, int(cfg["gate_threshold_db"])))
     if not cfg["presets"]:
@@ -228,7 +232,39 @@ def image_data(args):
         return "data:%s;base64,%s" % (mime, base64.b64encode(f.read()).decode("ascii"))
 
 
+# AI Voice mock: RB_MOCK_GPU=weak python tools/dev_server.py  shows the weak-card warning
+_VOICES = []
+
+
+def ai_status(_args):
+    if os.environ.get("RB_MOCK_GPU") == "weak":
+        gpu = {"name": "NVIDIA GeForce GTX 1050", "vram_mb": 2048, "level": "weak"}
+    else:
+        gpu = {"name": "NVIDIA GeForce RTX 3060", "vram_mb": 12288, "level": "strong"}
+    return {"gpu": gpu, "engine_ready": False}
+
+
+def voice_list(_args):
+    return list(_VOICES)
+
+
+def voice_import(args):
+    stem = os.path.splitext(os.path.basename(args["path"]))[0] or "voice"
+    vid = "".join(c if c.isalnum() or c in "-_" else "_" for c in stem)[:60]
+    voice = {"id": vid, "name": vid.replace("_", " "), "size_mb": 55, "has_index": True}
+    _VOICES[:] = [v for v in _VOICES if v["id"] != vid] + [voice]
+    return voice
+
+
+def voice_remove(args):
+    _VOICES[:] = [v for v in _VOICES if v["id"] != args["id"]]
+
+
 COMMANDS = {
+    "ai_status": ai_status,
+    "voice_list": voice_list,
+    "voice_import": voice_import,
+    "voice_remove": voice_remove,
     "image_data": image_data,
     "get_levels": get_levels,
     "import_files": import_files,

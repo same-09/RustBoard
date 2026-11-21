@@ -1127,6 +1127,128 @@ const FX = [
   ['8bit', '8-bit', 'Crunchy retro console'],
 ];
 
+/* ---------- AI Voice: your voice becomes another voice, live ---------- */
+// Rust (src-tauri/src/voice_ai.rs) checks the graphics card and keeps the imported voices.
+const VOICE_SITE = 'https://voice-models.com/';
+
+function aiVoiceSection() {
+  let ai = null;     // { gpu: {name, vram_mb, level}, engine_ready }
+  let voices = [];   // [{ id, name, size_mb, has_index }]
+  const gpuLine = h('div', { class: 'fx-status' });
+  const engineLine = h('div', { class: 'fx-status' });
+  const list = h('div', {});
+  const strong = () => !!ai && ai.gpu.level === 'strong';
+
+  const gpuText = () => {
+    if (!ai) return 'Checking your graphics card…';
+    const g = ai.gpu;
+    if (g.level === 'none') return 'No graphics card found. AI Voice will not run well on this PC.';
+    const mem = g.vram_mb ? ` · ${Math.round(g.vram_mb / 1024)} GB` : '';
+    return g.level === 'strong'
+      ? `${g.name}${mem} · Strong enough ✓`
+      : `${g.name}${mem} · Not strong enough. AI Voice needs an NVIDIA card with 6 GB or more.`;
+  };
+
+  const paint = () => {
+    gpuLine.textContent = gpuText();
+    gpuLine.classList.toggle('warn', !!ai && !strong());
+    if (cfg.ai_voice_on && ai && !strong()) {
+      gpuLine.textContent += ' It is on anyway: expect lag and dropped frames.';
+    }
+    engineLine.hidden = !ai || ai.engine_ready;
+    engineLine.textContent = 'The live voice engine is not in this version yet. Your voices and settings are saved and will work when it arrives.';
+    sw.checked = !!cfg.ai_voice_on;
+    list.replaceChildren(...(voices.length
+      ? voices.map((v) => {
+        const sel = cfg.ai_voice === v.id;
+        return h('div', { class: 'set-row' },
+          h('div', { class: 'txt' },
+            h('div', { class: 't' }, v.name),
+            h('div', { class: 'd' }, `${v.size_mb} MB${v.has_index ? ' · with index' : ''}`)),
+          h('div', { class: 'ctl' },
+            h('button', { class: sel ? 'primary' : '', onclick: () => { cfg.ai_voice = sel ? '' : v.id; commit(); paint(); } }, sel ? 'Selected' : 'Use'),
+            h('button', { onclick: () => removeVoice(v) }, 'Remove')));
+      })
+      : [h('div', { class: 'set-row' }, h('div', { class: 'fx-status' }, 'No voices yet. Get one on voice-models.com, then press Import voice.'))]));
+  };
+
+  const turnOn = () => { cfg.ai_voice_on = true; commit(); paint(); };
+
+  const sw = h('input', {
+    type: 'checkbox', checked: !!cfg.ai_voice_on,
+    onchange: (e) => {
+      if (!e.target.checked) { cfg.ai_voice_on = false; commit(); paint(); return; }
+      if (strong()) return turnOn();
+      e.target.checked = false; // not yet: ask first
+      openDialog({
+        title: 'Your graphics card may be too weak',
+        body: [
+          h('p', {}, ai && ai.gpu.name ? `Your card: ${ai.gpu.name}${ai.gpu.vram_mb ? ` (${Math.round(ai.gpu.vram_mb / 1024)} GB)` : ''}.` : 'No graphics card was found.'),
+          h('p', {}, 'AI Voice works best on an NVIDIA card with 6 GB or more. On this PC it can:'),
+          h('p', {}, '• make your voice stutter or cut out on Discord'),
+          h('p', {}, '• lower the FPS of your game'),
+          h('p', {}, '• make the PC hot and loud'),
+          h('p', {}, 'Turn it on anyway?'),
+        ],
+        buttons: [{ label: 'Cancel' }, { label: 'Turn on anyway', primary: true, onclick: turnOn }],
+      });
+    },
+  });
+
+  const removeVoice = (v) => openDialog({
+    title: 'Remove voice',
+    body: h('p', {}, `Remove "${v.name}" from Rustboard? The file you downloaded stays where it is.`),
+    buttons: [{ label: 'Cancel' }, {
+      label: 'Remove', primary: true,
+      onclick: async () => {
+        try {
+          await call('voice_remove', { id: v.id });
+          voices = voices.filter((x) => x.id !== v.id);
+          if (cfg.ai_voice === v.id) { cfg.ai_voice = ''; commit(); }
+          paint();
+        } catch (e) { toast(String(e), true); }
+      },
+    }],
+  });
+
+  const importVoice = async () => {
+    const [f] = await pickFiles({ multiple: false, filters: [{ name: 'Voice model', extensions: ['zip', 'pth', 'onnx'] }] });
+    if (!f) return;
+    try {
+      const v = await call('voice_import', { path: f });
+      voices = await call('voice_list');
+      cfg.ai_voice = v.id; commit();
+      toast(`Imported "${v.name}".`);
+      paint();
+    } catch (e) { toast(String(e), true); }
+  };
+
+  const openSite = () => call('open_url', { url: VOICE_SITE })
+    .catch(() => navigator.clipboard.writeText(VOICE_SITE).then(() => toast('Link copied.'), () => toast(VOICE_SITE)));
+
+  paint();
+  call('ai_status').then((r) => { ai = r; paint(); }).catch(() => { ai = { gpu: { name: '', vram_mb: 0, level: 'none' }, engine_ready: false }; paint(); });
+  call('voice_list').then((r) => { voices = r; paint(); }).catch(() => {});
+
+  return h('section', { class: 'set-section' },
+    h('h4', {}, 'AI Voice'),
+    h('div', { class: 'set-card' },
+      h('div', { class: 'set-row' },
+        h('div', { class: 'txt' },
+          h('div', { class: 't' }, 'Change into another voice'),
+          h('div', { class: 'd' }, 'Your voice turns into someone else’s, live. Needs a strong graphics card.')),
+        h('div', { class: 'ctl' }, sw)),
+      h('div', { class: 'set-row' }, h('div', { class: 'stack' }, gpuLine, engineLine)),
+      list,
+      h('div', { class: 'set-row' },
+        h('div', { class: 'txt' }, h('div', { class: 'd' }, 'Download a voice from voice-models.com, then import the .zip here.')),
+        h('div', { class: 'ctl' },
+          h('button', { onclick: openSite }, 'voice-models.com'),
+          h('button', { class: 'primary', onclick: importVoice }, 'Import voice'))),
+      h('div', { class: 'set-row' },
+        h('div', { class: 'fx-status' }, 'Only use a voice you have the right to use. Do not pretend to be a real person without their permission.'))));
+}
+
 let repaintFx = null; // redraw the Sound Effects page (a hotkey changed the effect)
 
 function openFx() {
@@ -1193,6 +1315,7 @@ function openFx() {
   repaintFx = () => { sw.checked = cfg.fx_on; paintGrid(); paintStatus(); };
 
   $('#fx-body').replaceChildren(
+    aiVoiceSection(),
     h('section', { class: 'set-section' },
       h('h4', {}, 'Mic effects'),
       h('div', { class: 'set-card' },

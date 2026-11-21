@@ -140,6 +140,18 @@ Tab **Sound Effects** (kolom kiri) mengubah suara mic secara langsung. Efek berj
 - **Efek per sound:** edit sebuah sound > **Sound effect**. Gema dan reverb tetap bunyi sebentar setelah file selesai. Efek sound tidak bergantung pada efek mic.
 - Efek ada di `src-tauri/src/fx.rs` dan punya tes sendiri.
 
+## AI Voice (suaramu jadi suara orang lain)
+
+Di tab **Sound Effects**, bagian paling atas. Ini mengubah suaramu menjadi suara lain secara real-time, dengan model suara (RVC) yang kamu impor.
+
+- **Butuh GPU kuat.** Rustboard mengecek kartu grafismu: NVIDIA dengan VRAM 6 GB atau lebih dianggap kuat. Kalau begitu, saklar langsung bisa dinyalakan.
+- **GPU lemah atau tidak ada.** Saat kamu menyalakan, muncul peringatan: suara bisa patah-patah, FPS game turun, PC panas. Kamu tetap boleh menyalakan lewat tombol **Turn on anyway**.
+- **Impor suara dari [voice-models.com](https://voice-models.com/).** Tombol `voice-models.com` membuka situsnya di browser. Unduh model (biasanya `.zip` berisi `.pth` dan `.index`), lalu tekan **Import voice** dan pilih file itu. File `.pth` atau `.onnx` langsung juga bisa.
+- Suara disalin ke `Documents/RustBoard/Voices/`, satu folder per suara. **Remove** menghapus salinan itu saja, bukan file unduhanmu.
+- Pakai suara yang kamu punya hak untuk dipakai. Jangan berpura-pura jadi orang sungguhan tanpa izin mereka.
+
+**Status:** pengecekan GPU, peringatan, impor, pilih, dan hapus suara sudah jalan. **Mesin konversi suara real-time belum ada di versi ini** (`ENGINE_READY = false` di `src-tauri/src/voice_ai.rs`), jadi menyalakan saklar belum mengubah suara. Aplikasi menulis ini di layar.
+
 ## Noise gate dan meter
 
 Settings > **Noise gate & meters** (dua saklar terpisah):
@@ -279,6 +291,7 @@ tools/         convert_config.py, dev_server.py, build_setup.ps1
 
 ## Belum ada
 
+- Mesin AI Voice (konversi suara real-time). Bagian di sekitarnya sudah ada, lihat bagian AI Voice.
 Minimize ke tray, ingatan ukuran jendela, jendela About, dan format wma.
 
 Mic passthrough butuh perangkat audio 32-bit float. Mic dan output boleh punya sample rate berbeda (resampler linear sederhana dengan buffer jitter 40 ms).

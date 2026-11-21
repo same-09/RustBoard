@@ -157,6 +157,12 @@ pub struct Config {
     /// Optional hotkey per mic effect: effect id -> keys. No entry = no hotkey.
     #[serde(default)]
     pub fx_keys: BTreeMap<String, Vec<String>>,
+    /// AI Voice: your voice becomes another voice (an imported model), live. Off by default.
+    #[serde(default)]
+    pub ai_voice_on: bool,
+    /// Which imported voice: its folder name in `Documents/RustBoard/Voices`. Empty = none.
+    #[serde(default)]
+    pub ai_voice: String,
     /// Phone remote: a small web page on the local network that plays sounds. Off by default.
     #[serde(default)]
     pub remote_on: bool,
@@ -201,6 +207,8 @@ impl Default for Config {
             fx_on: false,
             fx_preset: d_fx_preset(),
             fx_keys: BTreeMap::new(),
+            ai_voice_on: false,
+            ai_voice: String::new(),
             remote_on: false,
             remote_port: d_remote_port(),
             remote_token: String::new(),
@@ -309,6 +317,7 @@ mod tests {
     fn old_config_gets_effect_defaults() {
         let c: Config = serde_json::from_str("{}").unwrap();
         assert!(!c.fx_on);
+        assert!(!c.ai_voice_on);
         assert_eq!(c.fx_preset, "clean");
     }
 

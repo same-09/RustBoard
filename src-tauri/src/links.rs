@@ -1,8 +1,8 @@
 //! Which web links the app may open in the browser (the UI asks the backend to open them).
 
-/// Only our own repo and the VB-CABLE site. Nothing else, no spaces or quotes.
+/// Only our own repo, the VB-CABLE site and the voice-models.com site. Nothing else, no spaces or quotes.
 pub fn allowed(url: &str) -> bool {
-    const PREFIXES: [&str; 2] = ["https://github.com/same-09/RustBoard/", "https://vb-audio.com/"];
+    const PREFIXES: [&str; 3] = ["https://github.com/same-09/RustBoard/", "https://vb-audio.com/", "https://voice-models.com/"];
     !url.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'')
         && PREFIXES.iter().any(|p| url.starts_with(p))
 }
@@ -15,6 +15,8 @@ mod tests {
     fn our_links_pass() {
         assert!(allowed("https://github.com/same-09/RustBoard/releases/tag/v0.0.2"));
         assert!(allowed("https://vb-audio.com/Cable/"));
+        assert!(allowed("https://voice-models.com/"));
+        assert!(!allowed("https://voice-models.com.evil.example/"));
     }
 
     #[test]

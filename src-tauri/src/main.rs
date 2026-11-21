@@ -10,6 +10,7 @@ mod library;
 mod links;
 mod logic;
 mod remote;
+mod voice_ai;
 mod state;
 mod updater;
 
@@ -173,17 +174,25 @@ fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// `Documents/RustBoard/Soundboard`: the copies of every sound file you add.
+/// `Documents/RustBoard`: where the copies of sounds and voices live.
 /// (Falls back to the app data folder if Windows has no Documents folder.)
-fn soundboard_dir(app: &tauri::AppHandle, state: &AppState) -> PathBuf {
-    let base = app
-        .path()
+fn base_dir(app: &tauri::AppHandle, state: &AppState) -> PathBuf {
+    app.path()
         .document_dir()
         .ok()
         .map(|d| d.join("RustBoard"))
         .or_else(|| state.path.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("RustBoard"));
-    base.join(library::FOLDER)
+        .unwrap_or_else(|| PathBuf::from("RustBoard"))
+}
+
+/// `Documents/RustBoard/Soundboard`: the copies of every sound file you add.
+fn soundboard_dir(app: &tauri::AppHandle, state: &AppState) -> PathBuf {
+    base_dir(app, state).join(library::FOLDER)
+}
+
+/// `Documents/RustBoard/Voices`: one folder per imported AI voice.
+fn voices_dir(app: &tauri::AppHandle, state: &AppState) -> PathBuf {
+    base_dir(app, state).join(voice_ai::FOLDER)
 }
 
 /// Copy picked sound files into the Soundboard folder. Returns the new paths for the config.
@@ -203,6 +212,34 @@ fn import_folder(app: tauri::AppHandle, state: State<'_, AppState>, folder: Stri
         return Err("No sound files in this folder (mp3, wav, ogg, flac, m4a, aac, aiff).".into());
     }
     library::import(&soundboard_dir(&app, &state), &list)
+}
+
+#[derive(serde::Serialize)]
+struct AiStatus {
+    gpu: voice_ai::Gpu,
+    engine_ready: bool,
+}
+
+/// Graphics card check for AI Voice. Starts helper programs, so it runs on a worker thread.
+#[tauri::command(async)]
+fn ai_status() -> AiStatus {
+    AiStatus { gpu: voice_ai::detect(), engine_ready: voice_ai::ENGINE_READY }
+}
+
+#[tauri::command]
+fn voice_list(app: tauri::AppHandle, state: State<'_, AppState>) -> Vec<voice_ai::Voice> {
+    voice_ai::list(&voices_dir(&app, &state))
+}
+
+/// Add a voice from a .zip (voice-models.com) or a .pth / .onnx file. Copying is slow: worker thread.
+#[tauri::command(async)]
+fn voice_import(app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> Result<voice_ai::Voice, String> {
+    voice_ai::import(&voices_dir(&app, &state), Path::new(&path))
+}
+
+#[tauri::command]
+fn voice_remove(app: tauri::AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    voice_ai::remove(&voices_dir(&app, &state), &id)
 }
 
 /// Show the Soundboard folder in the file manager.
@@ -295,6 +332,10 @@ fn main() {
             import_files,
             import_folder,
             open_soundboard_folder,
+            ai_status,
+            voice_list,
+            voice_import,
+            voice_remove,
             select_preset,
             play_sound,
             audio_pause,

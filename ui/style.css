@@ -814,3 +814,6 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.15); backdrop-filter: blur(2px); 
 .credit { padding: 4px 2px 0; color: var(--text-tertiary); font-size: 12px; text-align: center; }
 .credit-link { height: auto; padding: 0; background: none; color: var(--text-secondary); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
 .credit-link:hover { background: none; color: var(--text-primary); }
+
+.set-row .stack { display: flex; flex-direction: column; gap: 6px; }
+.fx-status[hidden] { display: none; }
