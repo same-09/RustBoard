@@ -186,7 +186,7 @@ pub fn record(input_name: &str, seconds: u32) -> Result<(Vec<f32>, u32), String>
 
 /// The whole test: record, save, convert, time it, save the result.
 /// Takes `SECONDS` plus the conversion time: call it from a worker thread.
-pub fn run(voice_dir: &Path, input_name: &str) -> Result<TestOut, String> {
+pub fn run(engine: &crate::voice_ai::Engine, voice_dir: &Path, input_name: &str) -> Result<TestOut, String> {
     let out_dir = dir();
     fs::create_dir_all(&out_dir).map_err(|e| format!("Cannot make the temp folder: {e}"))?;
     let _ = fs::remove_file(out_dir.join(ORIGINAL));
@@ -202,7 +202,7 @@ pub fn run(voice_dir: &Path, input_name: &str) -> Result<TestOut, String> {
     let recorded_secs = samples.len() as f32 / rate as f32;
 
     let t0 = Instant::now();
-    let result = crate::voice_ai::convert(voice_dir, &samples, rate);
+    let result = crate::voice_ai::convert(engine, voice_dir, &samples, rate);
     let convert_secs = t0.elapsed().as_secs_f32();
 
     let mut out = TestOut {

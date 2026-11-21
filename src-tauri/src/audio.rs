@@ -51,6 +51,8 @@ pub struct AudioSettings {
     pub duck_on: bool,
     /// stops loud peaks (sounds and mic) from clipping
     pub limiter_on: bool,
+    /// AI Voice wanted right now (on, and the voice exists). The mic goes through the engine.
+    pub ai: Option<crate::voice_ai::Plan>,
 }
 
 impl AudioSettings {
@@ -71,6 +73,7 @@ impl AudioSettings {
             fx: crate::fx::active_index(c.fx_on, &c.fx_preset),
             duck_on: c.duck_on,
             limiter_on: c.limiter_on,
+            ai: None, // main.rs fills it in: it knows the RustBoard folder
         }
     }
 }
@@ -132,6 +135,10 @@ pub struct Levels {
     bands: [AtomicU32; BANDS],
     /// file of the sound that was started last (the UI matches it to a tile)
     sound_file: Mutex<String>,
+    /// AI Voice engine: 0 = not used, 1 = loading, 2 = live, 3 = failed
+    ai_state: AtomicU32,
+    /// the mode it runs in ("Balanced · cuda") or why it failed
+    ai_text: Mutex<String>,
 }
 
 /// Frequency bands the tiles dance to: bass, low mid, mid, high mid, treble.
@@ -156,6 +163,9 @@ pub struct LevelsOut {
     /// the mic is running
     pub active: bool,
     pub gate_open: bool,
+    /// AI Voice engine: 0 = not used, 1 = loading, 2 = live, 3 = failed
+    pub ai_state: u32,
+    pub ai_text: String,
 }
 
 fn to_db(v: f32) -> f32 {
@@ -210,7 +220,26 @@ impl Levels {
             output_db: to_db(f32::from_bits(self.output.swap(0, Ordering::Relaxed))),
             active: self.active.load(Ordering::Relaxed),
             gate_open: self.gate_open.load(Ordering::Relaxed),
+            ai_state: self.ai_state.load(Ordering::Relaxed),
+            ai_text: self.ai_text.lock().map(|t| t.clone()).unwrap_or_default(),
         }
+    }
+
+    fn set_ai(&self, s: &crate::voice_ai::AiState) {
+        use crate::voice_ai::AiState;
+        let (n, text) = match s {
+            AiState::Loading => (1, "Loading the voice engine… the first time takes a while.".to_string()),
+            AiState::Live(t) => (2, t.clone()),
+            AiState::Failed(e) => (3, e.clone()),
+        };
+        if let Ok(mut t) = self.ai_text.lock() {
+            *t = text;
+        }
+        self.ai_state.store(n, Ordering::Relaxed);
+    }
+
+    fn clear_ai(&self) {
+        self.ai_state.store(0, Ordering::Relaxed);
     }
 }
 
@@ -637,10 +666,13 @@ struct Mic {
     gate_threshold: Arc<AtomicU32>,
     fx: Arc<AtomicU32>,
     levels: Arc<Levels>,
+    /// the AI voice helper; stopped when the mic stops
+    _ai: Option<Arc<crate::voice_ai::Live>>,
 }
 
 impl Drop for Mic {
     fn drop(&mut self) {
+        self.levels.clear_ai();
         self.levels.active.store(false, Ordering::Relaxed);
         self.levels.speaking.store(false, Ordering::Relaxed);
     }
@@ -655,6 +687,7 @@ impl Mic {
         gate_threshold: f32,
         fx: u32,
         levels: Arc<Levels>,
+        ai: Option<crate::voice_ai::Plan>,
     ) -> Result<Mic, String> {
         let host = cpal::default_host();
         let in_dev = find_input(&host, input_name).ok_or_else(|| format!("Mic '{}' not found.", input_name))?;
@@ -676,8 +709,10 @@ impl Mic {
         let out_conf: cpal::StreamConfig = out_cfg.into();
 
         // Jitter buffer: start playing after ~40 ms of mic is queued, never hold more than ~150 ms.
-        let max_samples = (in_rate as usize) * 150 / 1000;
-        let prime_samples = (in_rate as usize) * 40 / 1000;
+        // AI voice comes in blocks of ~120 ms, so it needs a deeper buffer.
+        let (max_ms, prime_ms) = if ai.is_some() { (700, 220) } else { (150, 40) };
+        let max_samples = (in_rate as usize) * max_ms / 1000;
+        let prime_samples = (in_rate as usize) * prime_ms / 1000;
         let buffer: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::with_capacity(max_samples)));
         let vol = Arc::new(AtomicU32::new(volume.to_bits()));
         let gate_on = Arc::new(AtomicBool::new(gate_on));
@@ -695,6 +730,15 @@ impl Mic {
         let mut fx_now: u32 = 0;
         let mut fx_chain = crate::fx::build(0, in_rate);
         let mut mono: Vec<f32> = Vec::with_capacity(4096);
+        // AI voice: the helper runs in the background; until it is ready the mic stays silent
+        let live: Option<Arc<crate::voice_ai::Live>> = ai.map(|plan| {
+            let lv = Arc::clone(&levels);
+            Arc::new(crate::voice_ai::Live::start(plan, move |s| lv.set_ai(&s)))
+        });
+        let in_live = live.clone();
+        let mut ai_rs: Option<(Resampler, Resampler, usize)> = None; // mic -> engine, engine -> mic, block
+        let mut ai_in: VecDeque<f32> = VecDeque::new();
+        let mut ai_blk: Vec<f32> = Vec::new();
         let mut last_voice: Option<std::time::Instant> = None;
         let input = in_dev
             .build_input_stream(
@@ -708,6 +752,36 @@ impl Mic {
                         gate.process(&mut mono, level_in, f32::from_bits(in_gate_thr.load(Ordering::Relaxed)));
                     } else {
                         gate.reset();
+                    }
+                    // AI voice: your voice goes to the engine and what comes back replaces it.
+                    // Loading or failed: silence, so your real voice never leaks.
+                    if let Some(lv) = in_live.as_ref() {
+                        if lv.ready() {
+                            let (to_eng, from_eng, block) = ai_rs.get_or_insert_with(|| {
+                                (
+                                    Resampler::new(in_rate, lv.rate()),
+                                    Resampler::new(lv.rate(), in_rate),
+                                    lv.block(),
+                                )
+                            });
+                            ai_in.extend(mono.iter().copied());
+                            while let Some(x) = to_eng.next(&mut ai_in) {
+                                ai_blk.push(x);
+                                if ai_blk.len() >= *block {
+                                    lv.send(std::mem::take(&mut ai_blk));
+                                }
+                            }
+                            mono.clear();
+                            lv.take_output(|q| {
+                                while let Some(x) = from_eng.next(q) {
+                                    mono.push(x);
+                                }
+                            });
+                        } else {
+                            mono.clear();
+                            ai_in.clear();
+                            ai_blk.clear();
+                        }
                     }
                     // sound effect after the gate, so noise is not "voice changed"
                     let want = in_fx.load(Ordering::Relaxed);
@@ -794,6 +868,7 @@ impl Mic {
             gate_threshold,
             fx,
             levels,
+            _ai: live,
         })
     }
 
@@ -919,6 +994,8 @@ struct Engine {
     primary: Option<Output>,
     secondary: Option<Output>,
     mic: Option<Mic>,
+    /// the AI Voice plan the mic was opened with
+    ai_applied: Option<crate::voice_ai::Plan>,
     levels: Arc<Levels>,
     on_error: Box<dyn Fn(String) + Send>,
 }
@@ -946,6 +1023,7 @@ impl Engine {
                 p.mic_in != route.mic_in || p.mic_out != route.mic_out,
             ),
         };
+        let mic_changed = mic_changed || self.ai_applied != s.ai;
 
         if primary_changed {
             self.primary = self.open_output(&route.primary, true);
@@ -966,6 +1044,7 @@ impl Engine {
                     s.gate_threshold,
                     s.fx,
                     Arc::clone(&self.levels),
+                    s.ai.clone(),
                 ) {
                     Ok(m) => self.mic = Some(m),
                     Err(e) => (self.on_error)(e),
@@ -978,6 +1057,7 @@ impl Engine {
             m.set_fx(s.fx);
         }
 
+        self.ai_applied = s.ai.clone();
         self.applied = Some(route);
     }
 
@@ -1109,6 +1189,7 @@ pub fn spawn(levels: Arc<Levels>, on_error: impl Fn(String) + Send + 'static) ->
             primary: None,
             secondary: None,
             mic: None,
+            ai_applied: None,
             levels,
             on_error: Box::new(on_error),
         };
@@ -1181,7 +1262,7 @@ mod tests {
             live_output: AUTO_CABLE.into(),
             gate_on: false, gate_threshold: 0.003,
             fx: 0,
-            duck_on: false, limiter_on: true,
+            duck_on: false, limiter_on: true, ai: None,
         }
     }
 

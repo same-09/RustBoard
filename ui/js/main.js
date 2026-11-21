@@ -1136,6 +1136,21 @@ function aiVoiceSection() {
   let voices = [];   // [{ id, name, size_mb, has_index }]
   const gpuLine = h('div', { class: 'fx-status' });
   const engineLine = h('div', { class: 'fx-status' });
+  const runLine = h('div', { class: 'fx-status' });
+  runLine.hidden = true;
+  const live_ai = { state: 0, text: '' }; // what the engine does for the live mic
+  // the install of the voice engine (Python, PyTorch, models), asked from Rust while it runs
+  let inst = { running: false, done: false, step: 0, steps: 6, title: '', line: '', percent: 0, error: '' };
+  let instTimer = null;
+  let justDone = false; // the install finished while this page was open
+  const instFill = h('i', { class: 'm-fill' });
+  instFill.style.transition = 'width 400ms ease';
+  const instText = h('div', { class: 'fx-status' });
+  const instBar = h('div', { class: 'm-bar' }, instFill);
+  const instRow = h('div', { class: 'set-row col' }, instBar, instText);
+  instRow.hidden = true;
+  const instDesc = h('div', { class: 'd' });
+  const instBtns = h('div', { class: 'ctl' });
   const list = h('div', {});
   const strong = () => !!ai && ai.gpu.level === 'strong';
 
@@ -1155,8 +1170,17 @@ function aiVoiceSection() {
     if (cfg.ai_voice_on && ai && !strong()) {
       gpuLine.textContent += ' It is on anyway: expect lag and dropped frames.';
     }
-    engineLine.hidden = !ai || ai.engine_ready;
-    engineLine.textContent = 'The live voice engine is not in this version yet. Your voices and settings are saved and will work when it arrives.';
+    engineLine.hidden = !ai;
+    engineLine.classList.toggle('warn', !!ai && !ai.engine_ready);
+    engineLine.textContent = !ai ? '' : ai.engine_ready
+      ? (ai.engine_own ? 'Voice engine: installed by Rustboard ✓' : `Voice engine: engine folder found ✓ (${ai.engine_dir})`)
+      : `Voice engine: ${ai.engine_error}`;
+    paintInstall();
+    runLine.hidden = !(cfg.ai_voice_on && live_ai.state);
+    runLine.classList.toggle('warn', live_ai.state === 3);
+    runLine.textContent = live_ai.state === 1 ? live_ai.text
+      : live_ai.state === 2 ? `Your voice is being changed live ✓ (${live_ai.text})`
+        : live_ai.state === 3 ? `Voice engine problem: ${live_ai.text} Your mic is silent until this works.` : '';
     sw.checked = !!cfg.ai_voice_on;
     list.replaceChildren(...(voices.length
       ? voices.map((v) => {
@@ -1172,6 +1196,79 @@ function aiVoiceSection() {
       : [h('div', { class: 'set-row' }, h('div', { class: 'fx-status' }, 'No voices yet. Get one on voice-models.com, then press Import voice.'))]));
     paintTest();
   };
+
+  const paintInstall = () => {
+    const ready = !!ai && ai.engine_ready;
+    const cuda = !!ai && ai.gpu.vram_mb > 0; // nvidia-smi found a card
+    instRow.hidden = !(inst.running || inst.error || justDone);
+    instFill.style.width = `${inst.running ? inst.percent : justDone ? 100 : 0}%`;
+    instText.classList.toggle('warn', !!inst.error && inst.error !== 'Cancelled.');
+    instText.textContent = inst.running
+      ? `Step ${inst.step} of ${inst.steps}: ${inst.title}${inst.line ? ` — ${inst.line}` : ''}`
+      : inst.error ? (inst.error === 'Cancelled.' ? 'Cancelled. Press Install AI voice to continue where it stopped.' : `Install failed: ${inst.error}`)
+        : justDone ? 'Done. The AI voice engine is ready ✓' : '';
+    instDesc.textContent = ready && ai.engine_own
+      ? 'Installed by Rustboard in Documents/RustBoard/AI. Remove it if you want the space back (several GB). Your voices stay.'
+      : `Rustboard installs the engine for you: its own Python, PyTorch and the base models, inside Documents/RustBoard/AI. About ${cuda ? '3.5' : '0.8'} GB to download, 5 to 15 minutes. No separate engine download and no .bat file needed.`;
+    const btns = [];
+    if (inst.running) {
+      btns.push(h('button', { onclick: () => call('ai_install_cancel').catch(() => {}) }, 'Cancel'));
+    } else if (ready && ai.engine_own) {
+      btns.push(h('button', { onclick: removeEngine }, 'Remove engine'));
+    } else {
+      btns.push(h('button', { class: 'primary', onclick: startInstall }, ready ? 'Install AI voice instead' : 'Install AI voice'));
+    }
+    instBtns.replaceChildren(...btns);
+  };
+
+  const pollInstall = async () => {
+    try {
+      const was = inst.running;
+      inst = await call('ai_install_status');
+      if (was && !inst.running) {
+        clearInterval(instTimer); instTimer = null;
+        try { ai = await call('ai_status'); } catch (_) { /* keep the old status */ }
+        justDone = !!inst.done;
+        if (inst.done) toast('The AI voice engine is installed.');
+      }
+    } catch (_) { /* next tick */ }
+    paint();
+    if (!instRow.isConnected && instTimer) { clearInterval(instTimer); instTimer = null; }
+  };
+
+  const watchInstall = () => {
+    if (!instTimer) instTimer = setInterval(pollInstall, 800);
+  };
+
+  const startInstall = async () => {
+    try {
+      await call('ai_install');
+      inst = { running: true, done: false, step: 0, steps: 6, title: 'Starting', line: '', percent: 0, error: '' };
+      justDone = false;
+      watchInstall();
+      paint();
+    } catch (e) { toast(String(e), true); }
+  };
+
+  const removeEngine = () => openDialog({
+    title: 'Remove the AI voice engine',
+    body: [
+      h('p', {}, 'This deletes the engine Rustboard installed (Python, PyTorch and the base models, several GB).'),
+      h('p', {}, 'Your imported voices stay. You can install the engine again at any time.'),
+    ],
+    buttons: [{ label: 'Cancel' }, {
+      label: 'Remove', primary: true,
+      onclick: async () => {
+        try {
+          await call('ai_remove_engine');
+          inst = { running: false, done: false, step: 0, steps: 6, title: '', line: '', percent: 0, error: '' };
+          justDone = false;
+          ai = await call('ai_status');
+        } catch (e) { toast(String(e), true); }
+        paint();
+      },
+    }],
+  });
 
   const turnOn = () => { cfg.ai_voice_on = true; commit(); paint(); };
 
@@ -1222,6 +1319,14 @@ function aiVoiceSection() {
       toast(`Imported "${v.name}".`);
       paint();
     } catch (e) { toast(String(e), true); }
+  };
+
+  const pickEngine = async () => {
+    const dir = await pickFolder();
+    if (!dir) return;
+    cfg.ai_engine_dir = dir; commit();
+    try { ai = await call('ai_status'); } catch (_) { /* keep the old status */ }
+    paint();
   };
 
   const openSite = () => call('open_url', { url: VOICE_SITE })
@@ -1300,8 +1405,19 @@ function aiVoiceSection() {
   };
 
   paint();
-  call('ai_status').then((r) => { ai = r; paint(); }).catch(() => { ai = { gpu: { name: '', vram_mb: 0, level: 'none' }, engine_ready: false }; paint(); });
+  call('ai_status').then((r) => { ai = r; paint(); }).catch(() => { ai = { gpu: { name: '', vram_mb: 0, level: 'none' }, engine_ready: false, engine_dir: '', engine_error: 'Could not check.' }; paint(); });
   call('voice_list').then((r) => { voices = r; paint(); }).catch(() => {});
+  call('ai_install_status').then((r) => { inst = r; if (r.running) watchInstall(); paint(); }).catch(() => {});
+  // while this page is open: ask the engine how it is doing (loading, live, failed)
+  const poll = setInterval(async () => {
+    if (!runLine.isConnected) { clearInterval(poll); return; }
+    try {
+      const l = await call('get_levels');
+      if (l.ai_state !== live_ai.state || l.ai_text !== live_ai.text) {
+        live_ai.state = l.ai_state; live_ai.text = l.ai_text; paint();
+      }
+    } catch (_) { /* next tick */ }
+  }, 1000);
 
   return h('section', { class: 'set-section' },
     h('h4', {}, 'AI Voice'),
@@ -1311,7 +1427,18 @@ function aiVoiceSection() {
           h('div', { class: 't' }, 'Change into another voice'),
           h('div', { class: 'd' }, 'Your voice turns into someone else’s, live. Needs a strong graphics card.')),
         h('div', { class: 'ctl' }, sw)),
-      h('div', { class: 'set-row' }, h('div', { class: 'stack' }, gpuLine, engineLine)),
+      h('div', { class: 'set-row' }, h('div', { class: 'stack' }, gpuLine, engineLine, runLine)),
+      h('div', { class: 'set-row' },
+        h('div', { class: 'txt' }, h('div', { class: 't' }, 'AI voice engine'), instDesc),
+        instBtns),
+      instRow,
+      h('div', { class: 'set-row' },
+        h('div', { class: 'txt' },
+          h('div', { class: 't' }, 'Already have an engine folder?'),
+          h('div', { class: 'd' }, 'Optional. Pick the folder that contains the "rustboard" folder to use that engine instead. Auto = the engine Rustboard installed, or one in the usual places.')),
+        h('div', { class: 'ctl' },
+          h('button', { onclick: pickEngine }, 'Choose folder'),
+          h('button', { onclick: () => { cfg.ai_engine_dir = ''; commit(); call('ai_status').then((r) => { ai = r; paint(); }); } }, 'Auto'))),
       list,
       h('div', { class: 'set-row' },
         h('div', { class: 'txt' }, h('div', { class: 't' }, 'Test voice'), testHint),

@@ -150,9 +150,22 @@ Di tab **Sound Effects**, bagian paling atas. Ini mengubah suaramu menjadi suara
 - Suara disalin ke `Documents/RustBoard/Voices/`, satu folder per suara. **Remove** menghapus salinan itu saja, bukan file unduhanmu.
 - Pakai suara yang kamu punya hak untuk dipakai. Jangan berpura-pura jadi orang sungguhan tanpa izin mereka.
 
-**Test voice.** Di bagian AI Voice ada baris **Test voice**. Pilih satu suara dengan **Use**, tekan tombolnya, lalu bicara 4 detik ke mic yang kamu pilih di Settings. Setelah itu kamu bisa putar **My voice** (rekamanmu, untuk cek mic) dan **New voice** (hasil suara baru). Rustboard juga mengukur waktu konversi: kalau 4 detik suara selesai diubah jauh di bawah 4 detik, PC-mu cukup cepat untuk live (**Fast**), mendekati 4 detik berarti **Tight**, lebih lama berarti **Too slow**. Klip diputar lewat Primary output seperti sound biasa, jadi tombol ini mati saat **Go Live** menyala supaya tesmu tidak masuk Discord. Selama mesin belum ada, hasilnya menulis alasan itu dan hanya **My voice** yang bisa diputar. Kode: `src-tauri/src/voice_test.rs`; mesin nanti dipasang di `voice_ai::convert`.
+**Test voice.** Di bagian AI Voice ada baris **Test voice**. Pilih satu suara dengan **Use**, tekan tombolnya, lalu bicara 4 detik ke mic yang kamu pilih di Settings. Setelah itu kamu bisa putar **My voice** (rekamanmu, untuk cek mic) dan **New voice** (hasil suara baru). Rustboard juga mengukur waktu konversi: kalau 4 detik suara selesai diubah jauh di bawah 4 detik, PC-mu cukup cepat untuk live (**Fast**), mendekati 4 detik berarti **Tight**, lebih lama berarti **Too slow**. Klip diputar lewat Primary output seperti sound biasa, jadi tombol ini mati saat **Go Live** menyala supaya tesmu tidak masuk Discord. Kalau mesin bermasalah, alasannya ditulis di layar dan hanya **My voice** yang bisa diputar. Pemuatan pertama lambat (PyTorch dan model dimuat); tes berikutnya lebih cepat. Kode: `src-tauri/src/voice_test.rs`.
 
-**Status:** pengecekan GPU, peringatan, impor, pilih, dan hapus suara sudah jalan. **Mesin konversi suara real-time belum ada di versi ini** (`ENGINE_READY = false` di `src-tauri/src/voice_ai.rs`), jadi menyalakan saklar belum mengubah suara. Aplikasi menulis ini di layar.
+**Mesin suara.** Mesinnya adalah RVC. Sebagian kodenya (MIT, dari versi lama RustBoard) ikut tersalin di dalam Rustboard (`src-tauri/engine/rustboard/`, lisensi di `LICENSE-ENGINE`), jadi kamu **tidak perlu** memasang mesinnya sendiri:
+
+1. Di Rustboard, bagian AI Voice, tekan **Install AI voice**. Rustboard memasang semuanya sendiri di `Documents/RustBoard/AI/`: Python 3.12 miliknya sendiri (tanpa installer dan tanpa hak admin), PyTorch, paket AI, dan model dasar. Ada bar kemajuan dan tombol **Cancel**; kalau dibatalkan atau terputus, tekan lagi dan dia lanjut dari tempat berhenti. Unduhan sekitar 3,5 GB dengan kartu NVIDIA (PyTorch CUDA) atau sekitar 0,8 GB tanpa NVIDIA (PyTorch CPU), 5 sampai 15 menit.
+2. Impor suara, tekan **Use**, nyalakan saklar, lalu **Go Live**.
+
+**Remove engine** menghapus folder `AI` (beberapa GB). Suara yang kamu impor ada di `Documents/RustBoard/Voices/` dan tidak ikut terhapus.
+
+Sudah punya folder engine? Tombol **Choose folder** (bagian "Already have an engine folder?") tetap ada: pilih folder yang berisi folder `rustboard`, dan folder itu yang dipakai. **Auto** = engine yang dipasang Rustboard, atau folder `Engine` di `Documents/RustBoard`, atau `RustBoard-Engine` di `Documents`, `Downloads`, `Desktop`, atau `RUSTBOARD_ENGINE_DIR`.
+
+Di Windows, installer memakai Python "embeddable" dari python.org. Di Linux/macOS dia membuat venv dari Python 3.10 sampai 3.13 yang sudah ada di PC.
+
+Saat nyala, mic masuk ke mesin per blok 0,12 detik (mode **Balanced** di GPU, **Laptop** di CPU) dan hasilnya keluar ke mic output. Selama mesin masih memuat (10 detik atau lebih, pertama kali bisa lebih lama) atau kalau gagal, mic **dibisukan** supaya suara asli tidak bocor ke Discord; alasannya tampil di layar. Efek mic (Sound Effects) tetap dipasang setelah suara AI. Delay kira-kira 0,2 sampai 0,4 detik.
+
+**Status:** jalan, dengan installer sendiri. Kode: `src-tauri/src/ai_setup.rs` (installer), `src-tauri/src/voice_ai.rs` (cari mesin, jalankan program bantu), `src-tauri/engine/rb_bridge.py`, dan sambungan mic di `src-tauri/src/audio.rs`.
 
 ## Noise gate dan meter
 
@@ -293,7 +306,7 @@ tools/         convert_config.py, dev_server.py, build_setup.ps1
 
 ## Belum ada
 
-- Mesin AI Voice (konversi suara real-time). Bagian di sekitarnya sudah ada, lihat bagian AI Voice.
+- AI Voice tanpa Python dan PyTorch (mesin murni Rust, mis. lewat ONNX). Sekarang Rustboard memasang Python + PyTorch sendiri, lihat bagian AI Voice.
 Minimize ke tray, ingatan ukuran jendela, jendela About, dan format wma.
 
 Mic passthrough butuh perangkat audio 32-bit float. Mic dan output boleh punya sample rate berbeda (resampler linear sederhana dengan buffer jitter 40 ms).

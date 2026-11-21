@@ -163,6 +163,9 @@ pub struct Config {
     /// Which imported voice: its folder name in `Documents/RustBoard/Voices`. Empty = none.
     #[serde(default)]
     pub ai_voice: String,
+    /// Folder of an engine (has `rustboard/` and `.venv/`). Empty = look in the usual places.
+    #[serde(default)]
+    pub ai_engine_dir: String,
     /// Phone remote: a small web page on the local network that plays sounds. Off by default.
     #[serde(default)]
     pub remote_on: bool,
@@ -209,6 +212,7 @@ impl Default for Config {
             fx_keys: BTreeMap::new(),
             ai_voice_on: false,
             ai_voice: String::new(),
+            ai_engine_dir: String::new(),
             remote_on: false,
             remote_port: d_remote_port(),
             remote_token: String::new(),

@@ -218,7 +218,8 @@ def get_levels(_args):
     voice = -24 + 6 * math.sin(t * 9) if speaking else noise
     gate_open = (not cfg.get("gate_on")) or voice >= cfg.get("gate_threshold_db", -50)
     out = voice if gate_open else -100
-    return {"input_db": voice, "output_db": out, "active": True, "gate_open": gate_open}
+    return {"input_db": voice, "output_db": out, "active": True, "gate_open": gate_open,
+            "ai_state": 2 if cfg.get("ai_voice_on") else 0, "ai_text": "Balanced · cuda"}
 
 
 def image_data(args):
@@ -236,12 +237,62 @@ def image_data(args):
 _VOICES = []
 
 
+# Install mock: RB_MOCK_ENGINE=missing shows "not installed"; Install then runs a fake 24 s install.
+_INSTALL = {"t0": None, "cancelled": False, "installed": False}
+_INSTALL_STEPS = [("Getting Python", 4), ("Getting pip", 2), ("Installing audio packages", 6),
+                  ("Installing PyTorch (the big one)", 50), ("Installing AI packages", 18),
+                  ("Downloading the base voice models", 20)]
+_INSTALL_SECONDS = 24.0
+
+
 def ai_status(_args):
     if os.environ.get("RB_MOCK_GPU") == "weak":
         gpu = {"name": "NVIDIA GeForce GTX 1050", "vram_mb": 2048, "level": "weak"}
     else:
         gpu = {"name": "NVIDIA GeForce RTX 3060", "vram_mb": 12288, "level": "strong"}
-    return {"gpu": gpu, "engine_ready": False}
+    if os.environ.get("RB_MOCK_ENGINE") == "missing" and not _INSTALL["installed"]:
+        return {"gpu": gpu, "engine_ready": False, "engine_dir": "", "engine_own": False,
+                "engine_error": "The AI voice engine is not installed yet. Press Install AI voice."}
+    own = _INSTALL["installed"]
+    return {"gpu": gpu, "engine_ready": True, "engine_own": own, "engine_error": "",
+            "engine_dir": "C:\\Users\\me\\Documents\\RustBoard\\AI\\code" if own else "C:\\Users\\me\\RustBoard-Engine"}
+
+
+def ai_install(_args):
+    st = ai_install_status({})
+    if st["running"]:
+        raise ValueError("The install is already running.")
+    _INSTALL.update(t0=time.time(), cancelled=False)
+
+
+def ai_install_status(_args):
+    steps = len(_INSTALL_STEPS)
+    idle = {"running": False, "done": False, "step": 0, "steps": steps, "title": "", "line": "",
+            "percent": 0, "error": ""}
+    if _INSTALL["t0"] is None:
+        return idle
+    frac = (time.time() - _INSTALL["t0"]) / _INSTALL_SECONDS
+    if _INSTALL["cancelled"]:
+        return dict(idle, error="Cancelled.", percent=int(min(frac, 1) * 100))
+    if frac >= 1:
+        _INSTALL["installed"] = True
+        return dict(idle, done=True, percent=100, step=steps, title="Done")
+    pct, before = frac * 100, 0
+    for i, (title, share) in enumerate(_INSTALL_STEPS):
+        if pct < before + share:
+            return dict(idle, running=True, step=i + 1, title=title, percent=int(pct),
+                        line="Collecting package %d ..." % int((pct - before) * 3))
+        before += share
+    return idle
+
+
+def ai_install_cancel(_args):
+    if _INSTALL["t0"] is not None:
+        _INSTALL["cancelled"] = True
+
+
+def ai_remove_engine(_args):
+    _INSTALL.update(t0=None, installed=False)
 
 
 def voice_list(_args):
@@ -274,6 +325,10 @@ def voice_remove(args):
 
 COMMANDS = {
     "ai_status": ai_status,
+    "ai_install": ai_install,
+    "ai_install_status": ai_install_status,
+    "ai_install_cancel": ai_install_cancel,
+    "ai_remove_engine": ai_remove_engine,
     "voice_list": voice_list,
     "voice_import": voice_import,
     "voice_remove": voice_remove,
