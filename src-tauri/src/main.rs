@@ -8,12 +8,15 @@ mod fx;
 mod hotkeys;
 mod images;
 mod library;
+mod pack;
+mod pack_file;
 mod links;
 mod logic;
 mod remote;
 mod voice_ai;
 mod voice_test;
 mod state;
+mod tts;
 mod updater;
 
 use audio::{AudioCmd, AudioSettings, Devices, Levels, LevelsOut, LiveStatus, SoundLevelOut};
@@ -318,6 +321,50 @@ fn ai_test_play(state: State<'_, AppState>, which: String) -> Result<(), String>
     Ok(())
 }
 
+/// `Documents/RustBoard/Pictures`: the pictures that came inside an imported pack.
+fn pictures_dir(app: &tauri::AppHandle, state: &AppState) -> PathBuf {
+    base_dir(app, state).join("Pictures")
+}
+
+/// "Export preset": one `.rbpack` file with the preset, its sounds, pictures and (if wanted) settings.
+/// The UI saves its edits first (`sync`), so this reads the latest config. Copying: worker thread.
+#[tauri::command(async)]
+fn pack_export(state: State<'_, AppState>, preset: usize, with_settings: bool, path: String) -> Result<pack::ExportOut, String> {
+    let cfg = state.config.lock().map_err(|e| e.to_string())?.clone();
+    pack::export(&cfg, preset, with_settings, Path::new(&pack_file::with_ext(&path)))
+}
+
+/// What a `.rbpack` holds. Copies nothing.
+#[tauri::command(async)]
+fn pack_peek(path: String) -> Result<pack::Peek, String> {
+    pack::peek(Path::new(&path))
+}
+
+/// "Import preset": copies the sounds and pictures into the RustBoard folder and returns the
+/// preset (and settings). The UI adds it to the config.
+#[tauri::command(async)]
+fn pack_import(app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> Result<pack::ImportOut, String> {
+    pack::import(Path::new(&path), &soundboard_dir(&app, &state), &pictures_dir(&app, &state))
+}
+
+/// Voices installed in Windows, for the Text to speech list. Starts PowerShell: worker thread.
+#[tauri::command(async)]
+fn tts_voices(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Vec<tts::Voice>, String> {
+    tts::voices(&base_dir(&app, &state))
+}
+
+/// Read `text` out loud. It is played like a sound: headphones, and Discord when Go Live is on.
+#[tauri::command(async)]
+fn tts_speak(app: tauri::AppHandle, state: State<'_, AppState>, text: String) -> Result<(), String> {
+    let (voice, rate) = {
+        let c = state.config.lock().map_err(|e| e.to_string())?;
+        (c.tts_voice.clone(), c.tts_rate)
+    };
+    let wav = tts::synth(&base_dir(&app, &state), &text, &voice, rate)?;
+    state.send(AudioCmd::Play { file: wav.to_string_lossy().into_owned(), volume: 1.0, looped: false, fx: 0 });
+    Ok(())
+}
+
 /// Show the Soundboard folder in the file manager.
 #[tauri::command]
 fn open_soundboard_folder(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
@@ -413,6 +460,11 @@ fn main() {
             remote_new_token,
             import_files,
             import_folder,
+            pack_export,
+            pack_peek,
+            pack_import,
+            tts_voices,
+            tts_speak,
             open_soundboard_folder,
             ai_status,
             ai_install,

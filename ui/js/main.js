@@ -1,4 +1,4 @@
-import { call, listen, pickFiles, pickFolder, isTauri } from './api.js';
+import { call, listen, pickFiles, pickFolder, pickSave, isTauri } from './api.js';
 import { prettyKey, codeToName } from './keys.js';
 
 /* ---------- tiny helpers ---------- */
@@ -31,6 +31,8 @@ const ICONS = {
   stop: '<rect x="6" y="6" width="12" height="12" rx="1"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  download: '<path d="M12 4v12M7 11l5 5 5-5M4 20h16"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
   vol: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/>',
@@ -571,6 +573,98 @@ function clonePreset() {
   render();
 }
 
+/* ---------- share a preset as one .rbpack file ---------- */
+
+const PACK_FILTER = [{ name: 'RustBoard pack', extensions: ['rbpack'] }];
+const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+// Copy the settings of a pack into our config (effects, volume, gate...).
+const PACK_SETTINGS = ['volume', 'mic_volume', 'gate_on', 'gate_threshold_db', 'duck_on', 'limiter_on', 'fx_on', 'fx_preset', 'fx_keys'];
+
+function exportPreset() {
+  const index = cfg.selected_preset;
+  const name = preset().name || 'preset';
+  const state = { settings: true };
+  const check = h('input', { type: 'checkbox', checked: true, onchange: (e) => { state.settings = e.target.checked; } });
+  openDialog({
+    title: 'Export preset',
+    body: [
+      h('p', {}, `"${name}" becomes one .rbpack file with its sounds and pictures. Send it to a friend; they press Import preset.`),
+      h('label', { class: 'check-row' }, check, h('span', {}, 'Also save my settings (effects, volume, noise gate, limiter)')),
+      h('p', { class: 'hint' }, 'Not inside: your audio devices, the phone link and AI voices.'),
+    ],
+    buttons: [
+      { label: 'Cancel' },
+      {
+        label: 'Export',
+        primary: true,
+        onclick: async () => {
+          const path = await pickSave({ defaultPath: `${name.replace(/[\\/:*?"<>|]/g, '_')}.rbpack`, filters: PACK_FILTER });
+          if (!path) return false; // cancelled: keep the dialog
+          try {
+            await sync();
+            const r = await call('pack_export', { preset: index, withSettings: state.settings, path });
+            toast(`Saved ${r.files} file${r.files === 1 ? '' : 's'} (${mb(r.bytes)})` + (r.missing ? `. ${r.missing} missing file${r.missing === 1 ? ' was' : 's were'} left out.` : '.'), !!r.missing, r.missing ? 7000 : 0);
+          } catch (e) {
+            toast(e, true);
+          }
+        },
+      },
+    ],
+  });
+}
+
+async function importPreset() {
+  const [file] = await pickFiles({ multiple: false, filters: PACK_FILTER });
+  if (!file) return;
+  let info;
+  try {
+    info = await call('pack_peek', { path: file });
+  } catch (e) {
+    toast(e, true);
+    return;
+  }
+  const state = { settings: false };
+  const body = [
+    h('p', {}, `"${info.name || 'Preset'}": ${info.sounds} sound${info.sounds === 1 ? '' : 's'}, ${mb(info.bytes)}.`),
+    h('p', { class: 'hint' }, 'It is added as a new preset. Your own presets stay as they are. Sounds are copied to Documents/RustBoard.'),
+  ];
+  if (info.has_settings) {
+    body.push(h('label', { class: 'check-row' },
+      h('input', { type: 'checkbox', onchange: (e) => { state.settings = e.target.checked; } }),
+      h('span', {}, 'Also use its settings (replaces your effects, volume, noise gate, limiter)')));
+  }
+  openDialog({
+    title: 'Import preset',
+    body,
+    buttons: [
+      { label: 'Cancel' },
+      {
+        label: 'Import',
+        primary: true,
+        onclick: async () => {
+          try {
+            await sync();
+            const r = await call('pack_import', { path: file });
+            const names = new Set(cfg.presets.map((p) => p.name));
+            let name = r.preset.name;
+            for (let n = 2; names.has(name); n += 1) name = `${r.preset.name} (${n})`;
+            r.preset.name = name;
+            cfg.presets.push(r.preset);
+            cfg.selected_preset = cfg.presets.length - 1;
+            if (state.settings && r.settings) for (const k of PACK_SETTINGS) cfg[k] = r.settings[k];
+            commit();
+            render();
+            toast(`Added "${name}" with ${r.preset.sounds.length} sound${r.preset.sounds.length === 1 ? '' : 's'}.` + (r.skipped ? ` ${r.skipped} could not be used.` : ''), !!r.skipped, r.skipped ? 7000 : 0);
+          } catch (e) {
+            toast(e, true);
+          }
+        },
+      },
+    ],
+  });
+}
+
 function deletePreset() {
   if (cfg.presets.length <= 1) {
     toast('You need at least one preset.', true);
@@ -635,6 +729,10 @@ function openPresetMenu() {
     h('div', { class: 'menu-sep' }),
     act('plus', 'New preset', addPreset),
     act('copy', 'Duplicate', clonePreset),
+    h('div', { class: 'menu-sep' }),
+    act('upload', 'Export preset (.rbpack)', exportPreset),
+    act('download', 'Import preset (.rbpack)', importPreset),
+    h('div', { class: 'menu-sep' }),
     act('edit', 'Rename and keys', () => {
       const i = cfg.selected_preset;
       openPresetDialog(clone(cfg.presets[i]), (d) => { cfg.presets[i] = d; commit(); render(); }, false);
@@ -1131,6 +1229,78 @@ const FX = [
 // Rust (src-tauri/src/voice_ai.rs) checks the graphics card and keeps the imported voices.
 const VOICE_SITE = 'https://voice-models.com/';
 
+/* ---------- text to speech ---------- */
+
+// Type text, Windows reads it out loud. It plays like a sound, so it reaches Discord on Go Live.
+function ttsSection() {
+  const input = h('input', { type: 'text', maxlength: 1000, placeholder: 'Type something to say…', class: 'tts-input' });
+  const status = h('div', { class: 'fx-status' }, '');
+  const voiceSel = h('select', { disabled: true }, h('option', { value: '' }, 'Loading voices…'));
+  const rateLabel = h('span', { class: 'muted' }, '');
+  const showRate = () => { const r = cfg.tts_rate || 0; rateLabel.textContent = r === 0 ? 'Normal' : (r > 0 ? `+${r}` : String(r)); };
+  const rate = h('input', {
+    type: 'range', min: -10, max: 10, step: 1, value: cfg.tts_rate || 0,
+    oninput: () => { cfg.tts_rate = Number(rate.value); showRate(); commit(); },
+  });
+  showRate();
+
+  let busy = false;
+  const speakBtn = h('button', { class: 'primary' }, 'Speak');
+  const speak = async () => {
+    const text = input.value.trim();
+    if (busy || !text) return;
+    busy = true;
+    speakBtn.disabled = true;
+    status.classList.remove('warn');
+    status.textContent = 'Making the voice…';
+    try {
+      await sync();
+      await call('tts_speak', { text });
+      status.textContent = live ? 'Speaking to Discord (Go Live is on).' : 'Speaking. Press Go Live so Discord hears it too.';
+      input.select();
+    } catch (e) {
+      status.classList.add('warn');
+      status.textContent = String(e);
+    } finally {
+      busy = false;
+      speakBtn.disabled = false;
+    }
+  };
+  speakBtn.onclick = speak;
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); speak(); } });
+  const stopBtn = h('button', { onclick: () => call('audio_stop').catch(() => {}) }, 'Stop');
+
+  call('tts_voices').then((list) => {
+    voiceSel.replaceChildren(h('option', { value: '' }, 'Windows default'),
+      ...list.map((v) => h('option', { value: v.name }, `${v.name} (${v.lang})`)));
+    voiceSel.value = cfg.tts_voice || '';
+    if (voiceSel.value !== (cfg.tts_voice || '')) voiceSel.value = ''; // saved voice was removed
+    voiceSel.disabled = false;
+  }).catch((e) => {
+    voiceSel.replaceChildren(h('option', { value: '' }, 'Not available'));
+    status.classList.add('warn');
+    status.textContent = String(e);
+  });
+  voiceSel.onchange = () => { cfg.tts_voice = voiceSel.value; commit(); };
+
+  return h('section', { class: 'set-section' },
+    h('h4', {}, 'Text to speech'),
+    h('div', { class: 'set-card' },
+      h('div', { class: 'set-row col' },
+        h('div', { class: 'txt' },
+          h('div', { class: 't' }, 'Say it with a voice'),
+          h('div', { class: 'd' }, 'Type text and press Enter. It is read out loud like a sound, so your friends hear it on Discord when Go Live is on. Light: no graphics card needed.')),
+        h('div', { class: 'tts-line' }, input, speakBtn, stopBtn)),
+      h('div', { class: 'set-row' },
+        h('div', { class: 'txt' }, h('div', { class: 't' }, 'Voice'),
+          h('div', { class: 'd' }, 'More voices: Windows Settings > Time & language > Speech.')),
+        h('div', { class: 'ctl' }, voiceSel)),
+      h('div', { class: 'set-row' },
+        h('div', { class: 'txt' }, h('div', { class: 't' }, 'Speed')),
+        h('div', { class: 'ctl' }, h('div', { class: 'inline' }, rate, rateLabel))),
+      h('div', { class: 'set-row' }, status)));
+}
+
 function aiVoiceSection() {
   let ai = null;     // { gpu: {name, vram_mb, level}, engine_ready }
   let voices = [];   // [{ id, name, size_mb, has_index }]
@@ -1539,6 +1709,7 @@ function openFx() {
 
   $('#fx-body').replaceChildren(
     aiVoiceSection(),
+    ttsSection(),
     h('section', { class: 'set-section' },
       h('h4', {}, 'Mic effects'),
       h('div', { class: 'set-card' },

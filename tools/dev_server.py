@@ -347,6 +347,14 @@ def remote_info(_args):
 
 COMMANDS = {
     "remote_info": remote_info,
+    "pack_export": lambda a: {"path": a["path"], "files": 3, "missing": 1, "bytes": 2500000},
+    "pack_peek": lambda a: {"name": "Meme pack", "sounds": 2, "files": 3, "bytes": 2500000, "has_settings": True, "app": "RustBoard 1.0.0"},
+    "pack_import": lambda a: {"preset": {"name": "Meme pack", "keys": [], "selected_sound": 0, "sounds": [
+        {"name": "Boom", "files": ["C:/x/boom.mp3"], "keys": [], "volume": 100, "loop": False, "fx": "clean", "image": "", "error": None}]},
+        "settings": {"volume": 40, "mic_volume": 100, "gate_on": True, "gate_threshold_db": -45, "duck_on": False,
+                     "limiter_on": True, "fx_on": True, "fx_preset": "robot", "fx_keys": {}}, "files": 3, "skipped": 1},
+    "tts_voices": lambda a: [{"name": "Microsoft David Desktop", "lang": "en-US"}, {"name": "Microsoft Andika", "lang": "id-ID"}],
+    "tts_speak": lambda a: print("[mock] tts:", a.get("text")),
     "ai_status": ai_status,
     "ai_install": ai_install,
     "ai_install_status": ai_install_status,

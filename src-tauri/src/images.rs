@@ -19,6 +19,11 @@ fn mime(path: &Path) -> Option<&'static str> {
     }
 }
 
+/// png, jpg, webp, gif or bmp.
+pub fn is_picture(path: &Path) -> bool {
+    mime(path).is_some()
+}
+
 pub fn data_url(path: &str) -> Result<String, String> {
     let p = Path::new(path);
     let mime = mime(p).ok_or("This is not a picture (use png, jpg, webp, gif or bmp).")?;

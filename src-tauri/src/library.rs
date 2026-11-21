@@ -133,6 +133,17 @@ pub fn import(dir: &Path, paths: &[PathBuf]) -> Result<ImportOut, String> {
     Ok(out)
 }
 
+/// Copy one file into `dir` (any kind of file; the caller checked it). Same name and same
+/// content = the copy that is already there. Returns where the copy lives.
+pub fn copy_in(dir: &Path, src: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(dir).map_err(|e| format!("Cannot create '{}': {}", dir.display(), e))?;
+    let (target, needs_copy) = target_for(dir, src)?;
+    if needs_copy {
+        fs::copy(src, &target).map_err(|e| format!("Cannot copy '{}': {}", src.display(), e))?;
+    }
+    Ok(target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,6 +153,21 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn copy_in_reuses_the_same_file_and_renames_a_different_one() {
+        let src = temp("ci-src");
+        let dst = temp("ci-dst");
+        fs::write(src.join("a.png"), b"1111").unwrap();
+        let p1 = copy_in(&dst, &src.join("a.png")).unwrap();
+        let p2 = copy_in(&dst, &src.join("a.png")).unwrap();
+        assert_eq!(p1, p2);
+        let other = temp("ci-other");
+        fs::write(other.join("a.png"), b"2222").unwrap();
+        let p3 = copy_in(&dst, &other.join("a.png")).unwrap();
+        assert!(p3.ends_with("a (2).png"));
+        assert_eq!(fs::read_dir(&dst).unwrap().count(), 2);
     }
 
     #[test]

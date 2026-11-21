@@ -166,6 +166,11 @@ pub struct Config {
     /// Folder of an engine (has `rustboard/` and `.venv/`). Empty = look in the usual places.
     #[serde(default)]
     pub ai_engine_dir: String,
+    /// Text to speech: the Windows voice (empty = the Windows default) and its speed (-10..10).
+    #[serde(default)]
+    pub tts_voice: String,
+    #[serde(default)]
+    pub tts_rate: i32,
     /// Phone remote: a small web page on the local network that plays sounds. Off by default.
     #[serde(default)]
     pub remote_on: bool,
@@ -213,6 +218,8 @@ impl Default for Config {
             ai_voice_on: false,
             ai_voice: String::new(),
             ai_engine_dir: String::new(),
+            tts_voice: String::new(),
+            tts_rate: 0,
             remote_on: false,
             remote_port: d_remote_port(),
             remote_token: String::new(),
@@ -262,6 +269,7 @@ impl Config {
         if !crate::fx::is_known(&self.fx_preset) {
             self.fx_preset = d_fx_preset();
         }
+        self.tts_rate = self.tts_rate.clamp(crate::tts::RATE_MIN, crate::tts::RATE_MAX);
         self.fx_keys.retain(|id, keys| crate::fx::is_known(id) && !keys.is_empty());
         if self.remote_port < 1024 {
             self.remote_port = d_remote_port();

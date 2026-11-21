@@ -44,6 +44,8 @@
 - [Pasang](#pasang)
 - [Go Live: suara dan mic ke Discord](#go-live-suara-dan-mic-ke-discord)
 - [Efek suara](#efek-suara)
+- [Bagi preset ke teman (.rbpack)](#bagi-preset-ke-teman-rbpack)
+- [Text to speech](#text-to-speech-ketik-lalu-dibacakan)
 - [Noise gate dan meter](#noise-gate-dan-meter)
 - [Live mix](#live-mix)
 - [Remote HP dan aplikasi Android](#remote-hp-dan-aplikasi-android)
@@ -166,6 +168,28 @@ Di Windows, installer memakai Python "embeddable" dari python.org. Di Linux/macO
 Saat nyala, mic masuk ke mesin per blok 0,12 detik (mode **Balanced** di GPU, **Laptop** di CPU) dan hasilnya keluar ke mic output. Selama mesin masih memuat (10 detik atau lebih, pertama kali bisa lebih lama) atau kalau gagal, mic **dibisukan** supaya suara asli tidak bocor ke Discord; alasannya tampil di layar. Efek mic (Sound Effects) tetap dipasang setelah suara AI. Delay kira-kira 0,2 sampai 0,4 detik.
 
 **Status:** jalan, dengan installer sendiri. Kode: `src-tauri/src/ai_setup.rs` (installer), `src-tauri/src/voice_ai.rs` (cari mesin, jalankan program bantu), `src-tauri/engine/rb_bridge.py`, dan sambungan mic di `src-tauri/src/audio.rs`.
+
+## Bagi preset ke teman (.rbpack)
+
+Satu preset bisa dijadikan **satu file** `.rbpack`: isinya preset, semua file suara, gambar tile, dan (kalau mau) pengaturanmu. Kirim file itu ke teman lewat Discord atau apa saja.
+
+- **Export.** Klik nama preset di atas, pilih **Export preset (.rbpack)**. Centang **Also save my settings** kalau efek, volume, noise gate, dan limiter ikut disimpan. Pilih tempat simpan. File suara yang sudah hilang dari PC dilewati, dan jumlahnya diberi tahu.
+- **Import.** Klik nama preset, pilih **Import preset (.rbpack)**, pilih file. Rustboard menunjukkan isinya dulu. Preset masuk sebagai preset **baru** (nama sama diberi `(2)`), presetmu tidak diganti. Suara disalin ke `Documents/RustBoard/Soundboard`, gambar ke `Documents/RustBoard/Pictures`. Suara dan gambar yang sama persis tidak disalin dua kali.
+- **Pengaturan** dari pack baru dipakai kalau kamu mencentang **Also use its settings**. Kalau tidak, pengaturanmu aman.
+- Tombol pindah-ke-preset dikosongkan saat import, supaya tidak menabrak tombolmu. Tombol tiap sound tetap ikut.
+- **Tidak ikut:** perangkat audio, link Remote HP, folder engine, dan model AI Voice (itu milik PC-mu, atau besar dan punya lisensi sendiri).
+- Batas: 1 GB dan 2000 file per pack. File dari pack hanya dianggap audio atau gambar; pack tidak bisa menunjuk file lain di PC-mu.
+- Format: `RBPACK`, lalu panjang manifest, manifest JSON, lalu file-file. Kode: `src-tauri/src/pack.rs` dan `pack_file.rs`.
+
+## Text to speech (ketik, lalu dibacakan)
+
+Di tab **Sound Effects**, bagian **Text to speech**. Ketik teks, tekan **Enter** (atau **Speak**), dan Windows membacakannya. Suaranya diputar seperti sound biasa, jadi masuk ke headphone dan ke Discord lewat mic virtual saat **Go Live** menyala. **Stop** menghentikannya.
+
+- **Ringan, tanpa GPU.** Memakai suara yang sudah ada di Windows (SAPI lewat PowerShell). Tidak ada yang diunduh, tidak ada model AI.
+- **Voice** dan **Speed** (-10 sampai +10) disimpan di config.
+- Suara bahasa lain (misalnya Indonesia): Windows Settings > Time & language > Speech > Add voices.
+- Teks maksimal 1000 karakter. Pembacaan pertama butuh sekitar satu detik untuk menyiapkan suara.
+- Hanya Windows. Kode: `src-tauri/src/tts.rs`. Teks dikirim lewat variabel lingkungan, tidak pernah ditempel ke skrip, jadi tidak bisa menjalankan perintah.
 
 ## Noise gate dan meter
 
@@ -307,6 +331,7 @@ tools/         convert_config.py, dev_server.py, build_setup.ps1
 |---|---|
 | Config | `<app data>/com.rustboard.app/config.json` |
 | Salinan sound | `Documents\RustBoard\Soundboard\` |
+| Gambar dari pack | `Documents\RustBoard\Pictures\` |
 | Pemasangan | `%LOCALAPPDATA%\Rustboard` |
 
 `<app data>` adalah `%APPDATA%` di Windows, `~/.local/share` di Linux, dan `~/Library/Application Support` di macOS.

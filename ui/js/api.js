@@ -36,6 +36,15 @@ export async function pickFiles({ multiple = false, filters = [] } = {}) {
   return text.split('\n').map((s) => s.trim()).filter(Boolean);
 }
 
+// "Save as" dialog. Returns the chosen path, or '' if the user cancels.
+export async function pickSave({ defaultPath = '', filters = [] } = {}) {
+  if (isTauri) {
+    const r = await T.dialog.save({ defaultPath, filters });
+    return typeof r === 'string' ? r : '';
+  }
+  return (window.prompt('Mock mode (no save dialog). Enter a file path:', defaultPath) || '').trim();
+}
+
 // Pick a folder. Returns its path, or '' if the user cancels.
 export async function pickFolder() {
   if (isTauri) {
