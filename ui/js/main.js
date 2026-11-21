@@ -1,4 +1,4 @@
-import { call, listen, pickFiles, isTauri } from './api.js';
+import { call, listen, pickFiles, pickFolder, isTauri } from './api.js';
 import { prettyKey, codeToName } from './keys.js';
 
 /* ---------- tiny helpers ---------- */
@@ -24,6 +24,7 @@ function h(tag, attrs = {}, ...kids) {
 
 const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   minus: '<path d="M5 12h14"/>',
   play: '<path d="M7 4l13 8-13 8z"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
@@ -148,6 +149,37 @@ async function playSound(i) {
   try {
     await sync();
     await call('play_sound', { preset: cfg.selected_preset, sound: i });
+    wave.lastPoll = 0; // look at the level right away, no wait
+  } catch (e) {
+    toast(e, true);
+  }
+}
+
+// "Import folder": every sound file in a folder becomes its own sound (named like the file).
+// Files are copied to the Soundboard folder. Files already on the board are not added twice.
+async function importFolder() {
+  const dir = await pickFolder();
+  if (!dir) return;
+  try {
+    const r = await call('import_folder', { folder: dir });
+    const p = preset();
+    const used = new Set(p.sounds.flatMap((s) => s.files));
+    const fresh = [];
+    for (const f of r.files) {
+      if (used.has(f.path)) continue;
+      used.add(f.path);
+      fresh.push({ name: f.name, files: [f.path], keys: [], volume: 100, loop: false, fx: 'clean', image: '', error: null });
+    }
+    if (!fresh.length) {
+      toast('Nothing new: these sounds are already on the board.');
+      return;
+    }
+    p.selected_sound = p.sounds.length;
+    p.sounds.push(...fresh);
+    commit();
+    renderSounds();
+    const n = fresh.length;
+    toast(`Imported ${n} sound${n === 1 ? '' : 's'}${r.skipped ? `, ${r.skipped} skipped` : ''}. Copies are in ${r.folder}`, false, 6000);
   } catch (e) {
     toast(e, true);
   }
@@ -182,16 +214,132 @@ function loadImage(path) {
 
 const IMAGE_FILTER = [{ name: 'Picture', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }];
 
-function soundCover(name, onPlay, image = '') {
+/* ---------- dancing bars on the tile cover ---------- */
+// Rust splits what the soundboard plays into 5 bands (bass .. treble) and `get_sound_level`
+// gives the loudest level of each since the last call. Each white bar follows one band.
+// Still icon = rest heights. Bars jump up fast, fall back slowly, then settle into the icon.
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const WAVE_X = [4, 8, 12, 16, 20];
+const WAVE_REST = [2, 6, 9, 4, 1];          // half heights of the still icon
+const WAVE_TILT_DB = [0, 3, 6, 9, 12];      // treble has less energy: lift it a little
+const WAVE_FLOOR_DB = -56;                  // this level = bar at its smallest
+const WAVE_RANGE_DB = 46;                   // ...and this much louder = bar at full height
+const WAVE_MIN = 0.6;                       // half height of a silent bar while the sound plays
+const WAVE_MAX = 10.5;                      // half height of a full bar (viewBox is 24 high)
+const WAVE_HOLD_MS = 250;                   // short silence does not drop the bars to rest yet
+
+const wave = {
+  tiles: [],            // { svg, files, live } for the tiles on screen
+  target: [0, 0, 0, 0, 0],
+  level: [0, 0, 0, 0, 0],
+  act: 0,               // 0 = still icon, 1 = dancing
+  file: '',
+  busy: false,
+  lastPoll: 0,
+  lastLoud: -1e9,
+  started: false,
+};
+
+function setWaveBars(svg, halves) {
+  svg._bars.forEach((l, i) => {
+    l.setAttribute('y1', (12 - halves[i]).toFixed(2));
+    l.setAttribute('y2', (12 + halves[i]).toFixed(2));
+  });
+}
+
+function waveIcon() {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add('wave');
+  svg._bars = WAVE_X.map((x) => {
+    const l = document.createElementNS(SVG_NS, 'line');
+    l.setAttribute('x1', x);
+    l.setAttribute('x2', x);
+    svg.append(l);
+    return l;
+  });
+  setWaveBars(svg, WAVE_REST);
+  return svg;
+}
+
+function pollWave(now) {
+  wave.busy = true;
+  wave.lastPoll = now;
+  call('get_sound_level').then((l) => {
+    wave.file = l.file || '';
+    let loud = false;
+    l.bands.forEach((v, i) => {
+      const db = v > 1e-5 ? 20 * Math.log10(v) : -100;
+      const t = Math.max(0, Math.min(1, (db + WAVE_TILT_DB[i] - WAVE_FLOOR_DB) / WAVE_RANGE_DB));
+      wave.target[i] = t;
+      if (v > 1e-4) loud = true;
+    });
+    if (loud) wave.lastLoud = performance.now();
+  }).catch(() => {
+    wave.target.fill(0);
+  }).finally(() => {
+    wave.busy = false;
+  });
+}
+
+function waveFrame(now) {
+  requestAnimationFrame(waveFrame);
+  if (document.hidden || view !== 'home') return;
+
+  const dancing = now - wave.lastLoud < WAVE_HOLD_MS;
+  // while a sound plays: ask about 30 times a second; idle: 10 times a second is enough
+  if (!wave.busy && now - wave.lastPoll >= (dancing || wave.act > 0.01 ? 33 : 100)) pollWave(now);
+
+  for (let i = 0; i < wave.level.length; i++) {
+    const t = wave.target[i];
+    wave.level[i] += (t - wave.level[i]) * (t > wave.level[i] ? 0.6 : 0.14);
+  }
+  wave.act += ((dancing ? 1 : 0) - wave.act) * (dancing ? 0.4 : 0.1);
+  if (!dancing && wave.act < 0.01) wave.act = 0;
+
+  const peak = Math.max(...wave.level);
+  for (const tile of wave.tiles) {
+    const mine = wave.act > 0 && wave.file && tile.files.includes(wave.file);
+    if (!mine) {
+      if (tile.live) { // back to the still icon
+        setWaveBars(tile.svg, WAVE_REST);
+        tile.cover.classList.remove('live');
+        tile.cover.style.removeProperty('--lvl');
+        tile.live = false;
+      }
+      continue;
+    }
+    const halves = WAVE_REST.map((rest, i) => {
+      const dance = WAVE_MIN + wave.level[i] * (WAVE_MAX - WAVE_MIN);
+      return rest + (dance - rest) * wave.act;
+    });
+    setWaveBars(tile.svg, halves);
+    tile.cover.classList.add('live');
+    tile.cover.style.setProperty('--lvl', (peak * wave.act).toFixed(3));
+    tile.live = true;
+  }
+}
+
+function startWave() {
+  if (wave.started) return;
+  wave.started = true;
+  requestAnimationFrame(waveFrame);
+}
+
+function soundCover(name, onPlay, image = '', files = []) {
   const t = document.createElement('span');
   t.innerHTML = SOLID_PLAY;
   const go = h('span', { class: 'go' }, t.firstChild);
+  const svg = waveIcon();
   const cover = h('div', {
     class: 'cover',
     style: `--h:${hueOf(name)}`,
     title: 'Play',
     onclick: (e) => { e.stopPropagation(); onPlay(); },
-  }, icon('bars'));
+  }, svg);
+  wave.tiles.push({ svg, cover, files, live: false });
   if (image) {
     loadImage(image).then((url) => {
       if (!url) return; // missing file: keep the generated cover
@@ -208,6 +356,7 @@ function renderSounds() {
   const list = $('#sound-list');
   $('#sound-count').textContent = p.sounds.length || '';
   list.replaceChildren();
+  wave.tiles = []; // the covers are drawn again below
   setAmbient(p.sounds[p.selected_sound]);
   if (!p.sounds.length) {
     list.append(emptyState('No sounds yet', 'Add a sound file and give it a key. Press the key anywhere and it plays.', 'Add sound', () => $('#sound-add').click()));
@@ -230,7 +379,7 @@ function renderSounds() {
         ondblclick: () => playSound(i),
       },
         h('div', { class: 'art' },
-          soundCover(s.name || s.files[0] || 'sound', () => { select(i); playSound(i); }, s.image),
+          soundCover(s.name || s.files[0] || 'sound', () => { select(i); playSound(i); }, s.image, s.files),
           h('div', { class: 'acts' },
             iconBtn('edit', 'Edit', () => openSoundDialog(clone(s), (d) => { p.sounds[i] = d; commit(); renderSounds(); })),
             iconBtn('trash', 'Remove', () => {
@@ -313,7 +462,15 @@ function openSoundDialog(d, onSave) {
         h('button', {
           onclick: async () => {
             const picked = await pickFiles({ multiple: true, filters: AUDIO_FILTER });
-            for (const f of picked) if (!d.files.includes(f)) d.files.push(f);
+            if (!picked.length) return;
+            try {
+              // copies go to the Soundboard folder, the sound keeps the copy
+              const r = await call('import_files', { paths: picked });
+              for (const f of r.files) if (!d.files.includes(f.path)) d.files.push(f.path);
+              if (r.skipped) toast(`${r.skipped} file${r.skipped === 1 ? '' : 's'} skipped (not a sound file or cannot be read).`, true);
+            } catch (e) {
+              toast(e, true);
+            }
             paintFiles();
           },
         }, 'Add files…'))),
@@ -830,6 +987,75 @@ function buildSettings() {
       meters);
   };
 
+  // Live mix: ducking (sounds get quieter while you speak) and the limiter. Each has a switch.
+  const liveMixSection = () => {
+    const duckSwitch = h('input', {
+      type: 'checkbox', checked: cfg.duck_on,
+      onchange: (e) => { cfg.duck_on = e.target.checked; commit(); },
+    });
+    const limiterSwitch = h('input', {
+      type: 'checkbox', checked: cfg.limiter_on,
+      onchange: (e) => { cfg.limiter_on = e.target.checked; commit(); },
+    });
+    return section('Live mix',
+      row('Ducking', 'Sounds get quieter while you speak, so your friends hear you. Works on the output that carries your mic (Go Live). Needs the mic on.', duckSwitch),
+      row('Limiter', 'Stops loud peaks from crackling in Discord. Applies to sounds and to your mic.', limiterSwitch));
+  };
+
+  // Phone remote: a web page on your Wi-Fi, like a Stream Deck. Off by default.
+  const remoteSection = () => {
+    const box = h('div', { class: 'set-row col remote-box' });
+    box.hidden = !cfg.remote_on;
+
+    const paint = async () => {
+      if (!cfg.remote_on) return;
+      await sync(); // Rust must have the switch and the port before we ask
+      try {
+        const r = await call('remote_info');
+        const qr = h('div', { class: 'remote-qr' });
+        qr.innerHTML = r.qr; // our own SVG from Rust
+        box.replaceChildren(
+          h('div', { class: 'remote-wrap' },
+            qr,
+            h('div', { class: 'remote-txt' },
+              h('div', { class: r.running ? 'ok' : 'warn' }, r.running ? 'Running' : 'Not running (see the message, try another port)'),
+              h('div', { class: 'd' }, 'Scan the QR code with your phone, or open this link. Phone and PC must use the same Wi-Fi.'),
+              h('div', { class: 'remote-url' }, r.url),
+              h('div', { class: 'inline' },
+                h('button', { onclick: () => copy(r.url) }, icon('copy'), 'Copy link'),
+                h('button', {
+                  onclick: async () => {
+                    try { cfg = await call('remote_new_token'); toast('New link made. The old link stops working.'); paint(); }
+                    catch (e) { toast(e, true); }
+                  },
+                }, 'New link'))),
+          ),
+          h('div', { class: 'd' }, 'Anyone with this link can play your sounds. Keep it private. If Windows asks about network access, allow Private networks.'));
+      } catch (e) {
+        box.replaceChildren(h('div', { class: 'd' }, `Cannot read the link: ${e}`));
+      }
+    };
+
+    const onoff = h('input', {
+      type: 'checkbox', checked: cfg.remote_on,
+      onchange: (e) => { cfg.remote_on = e.target.checked; box.hidden = !cfg.remote_on; commit(); paint(); },
+    });
+    const port = h('input', {
+      type: 'number', min: 1024, max: 65535, value: cfg.remote_port, class: 'port',
+      onchange: () => {
+        const v = Math.round(Number(port.value));
+        cfg.remote_port = v >= 1024 && v <= 65535 ? v : 8787;
+        port.value = cfg.remote_port;
+        commit(); paint();
+      },
+    });
+    paint();
+    return section('Phone remote',
+      row('Phone remote', 'Control the soundboard from your phone, like a Stream Deck.', onoff),
+      row('Port', 'Change it only if another app already uses 8787.', port),
+      box);
+  };
+
   const cable = devices.cable;
   const liveChoices = [AUTO_CABLE, ...devices.outputs.filter((n) => n !== 'Disabled' && n !== 'Default Output Device')];
 
@@ -863,6 +1089,10 @@ function buildSettings() {
       row('Mic volume', null, range('mic_volume'))),
 
     micGateSection(),
+
+    liveMixSection(),
+
+    remoteSection(),
 
     section('Sound shortcuts',
       shortcut('Pause all', ss.pause),
@@ -988,6 +1218,8 @@ function wire() {
   for (const t of document.querySelectorAll('#tabs .rail-tab')) setIcon($('.ico', t), t.dataset.icon);
   setIcon($('#live-ico'), 'mic');
   setIcon($('#add-ico'), 'plus');
+  setIcon($('#folder-ico'), 'folder');
+  setIcon($('#sound-open'), 'folder');
   setIcon($('#sound-stop'), 'stop');
   setIcon($('#sound-pause'), 'pause');
   setIcon($('#play-ico'), 'play');
@@ -1001,6 +1233,9 @@ function wire() {
     if (e.key === 'Escape' && view !== 'home' && !dlg.open && !bindDlg.open) showView('home');
   });
   $('#go-live').addEventListener('click', toggleLive);
+
+  $('#sound-folder').addEventListener('click', importFolder);
+  $('#sound-open').addEventListener('click', () => call('open_soundboard_folder').catch((e) => toast(e, true)));
 
   $('#sound-add').addEventListener('click', () => {
     const p = preset();
@@ -1145,6 +1380,7 @@ async function init() {
   render();
   renderLive();
   showView('home');
+  startWave();
   refreshDevices().catch(() => {}); // warm the device list so Settings opens fast
 
   // hotkeys change the selection in Rust, then tell us

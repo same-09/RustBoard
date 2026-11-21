@@ -1,0 +1,120 @@
+package com.rustboard.remote;
+
+import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.view.View;
+import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+
+/**
+ * Rustboard Remote: a full-screen WebView that shows the remote (assets/index.html).
+ * The page talks to the Rustboard app on the PC over Wi-Fi. Landscape only (see the manifest).
+ */
+public class MainActivity extends Activity {
+    private WebView web;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (Build.VERSION.SDK_INT >= 28) {
+            // use the whole screen, also beside the camera notch (the page pads itself)
+            getWindow().getAttributes().layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
+
+        web = new WebView(this);
+        web.setBackgroundColor(0xFF0B0B0C);
+        setContentView(web);
+
+        WebSettings s = web.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setAllowFileAccess(true);
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        s.setBuiltInZoomControls(false);
+        s.setSupportZoom(false);
+        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        web.setWebViewClient(new WebViewClient());
+        web.addJavascriptInterface(new Bridge(), "Android");
+        web.loadUrl("file:///android_asset/index.html");
+    }
+
+    /** What the page may ask the phone to do. */
+    private class Bridge {
+        @JavascriptInterface
+        public void vibrate(int ms) {
+            Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (v == null || !v.hasVibrator()) return;
+            if (Build.VERSION.SDK_INT >= 26) {
+                v.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                v.vibrate(ms);
+            }
+        }
+
+        /** Text on the phone clipboard (the link copied from the PC). */
+        @JavascriptInterface
+        public String paste() {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm == null || !cm.hasPrimaryClip()) return "";
+            ClipData clip = cm.getPrimaryClip();
+            if (clip == null || clip.getItemCount() == 0) return "";
+            CharSequence t = clip.getItemAt(0).coerceToText(MainActivity.this);
+            return t == null ? "" : t.toString();
+        }
+
+        @JavascriptInterface
+        public void quit() {
+            runOnUiThread(MainActivity.this::finish);
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) hideBars();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void hideBars() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    }
+
+    /** Back: the page closes its own dialog first. If it has none, the app closes. */
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        web.evaluateJavascript("(window.onBack ? window.onBack() : false)", value -> {
+            if (!"true".equals(value)) finish();
+        });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        web.onResume();
+        web.evaluateJavascript("window.onWake && window.onWake()", null);
+    }
+
+    @Override
+    protected void onPause() {
+        web.onPause();
+        super.onPause();
+    }
+}

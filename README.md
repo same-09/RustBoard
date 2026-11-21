@@ -147,3 +147,24 @@ pwsh tools/build_setup.ps1        # -> dist-setup/Rustboard_<version>_x64-setup.
 
 `cargo tauri build` inside `src-tauri` still makes the old NSIS setup (`tauri.conf.json` > `bundle.windows.nsis`),
 but releases no longer use it.
+
+
+## Android remote app (APK)
+
+`android/` is a small Android app: the phone remote as a real app, not a browser tab. It is landscape only,
+keeps the screen on, and talks to Rustboard on your PC over Wi-Fi (the **Phone remote** server, Settings).
+
+1. PC: Rustboard > Settings > Phone remote > turn on > **Copy link**.
+2. Send the link to the phone (chat, email), copy it there, open the app, press **Paste**, then **Connect**.
+   The app remembers the link. **Change PC** goes back to this screen.
+3. Phone and PC must use the same Wi-Fi. If Windows asks about network access, allow *Private networks*.
+
+The APK is built by GitHub (`.github/workflows/android.yml`): a tag like `v0.1.7` adds
+`Rustboard-Remote_0.1.7.apk` to the same Release as the Windows setup. On the phone: open the APK and allow
+"install unknown apps" for your browser or file app. The build is signed with `android/rustboard-remote.keystore`
+(a public key in this repo, so every build can update the one before). Fine for a private tool, not for the Play Store.
+
+The page scales itself to the phone screen (small phone = smaller page). **A−** / **A+** on the left fine tune it; the choice is saved.
+
+Run the page on a PC without a phone: open `android/app/src/main/assets/index.html` in a browser. The app code
+itself is `MainActivity.java` (a full-screen WebView, vibrate, paste, back button).
