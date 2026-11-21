@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Rustboard Remote</title>
+<style>
+  :root {
+    --bg: #0b0b0c; --card: #1a1a1d; --card-2: #26262b; --line: #2e2e33;
+    --text: #f2f2f3; --dim: #9a9aa3; --accent: #f2f2f3; --accent-text: #0b0b0c; --bad: #ff6b6b; --ok: #3ddc84;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  html { font-size: 14px; } /* the script sets this: the whole screen scales with it */
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
+    font: 1rem/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button, input { font: inherit; color: inherit; }
+  button { border: 0; cursor: pointer; }
+
+  /* ---- landscape layout: [presets | sounds | controls] ---- */
+  #app { height: 100%; display: none; grid-template-columns: 12rem 1fr 14.286rem; gap: 0.714rem;
+    padding: max(0.714rem, env(safe-area-inset-top)) max(0.857rem, env(safe-area-inset-right))
+             max(0.714rem, env(safe-area-inset-bottom)) max(0.857rem, env(safe-area-inset-left)); }
+  #app.show { display: grid; }
+  .col { display: flex; flex-direction: column; min-height: 0; gap: 0.571rem; }
+  .col h2 { margin: 0.143rem 0.143rem 0; font-size: 0.786rem; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; flex: none; }
+  .scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+  .scroll::-webkit-scrollbar { display: none; }
+
+  .brand { display: flex; align-items: center; justify-content: space-between; flex: none; padding: 0.143rem 0.143rem 0.286rem; }
+  .brand b { font-size: 1.143rem; letter-spacing: -0.01em; }
+  #dot { width: 0.643rem; height: 0.643rem; border-radius: 50%; background: var(--ok); }
+  #dot.off { background: var(--bad); }
+
+  .list { display: flex; flex-direction: column; gap: 0.429rem; }
+  .chip { text-align: left; border-radius: 0.714rem; padding: 0.714rem 0.857rem; background: var(--card); font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+  .chip.on { background: var(--accent); color: var(--accent-text); }
+  .chip:active { background: var(--card-2); }
+  .chip.on:active { background: var(--accent); }
+
+  /* sounds: tiles run to the right, then wrap */
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, 7.429rem); gap: 0.857rem 0.714rem; justify-content: start; align-content: start; padding: 0.357rem 0.357rem 0.571rem; }
+  .pad { background: transparent; padding: 0; text-align: left; width: 7.429rem; }
+  .pad .art { position: relative; width: 7.429rem; height: 7.429rem; border-radius: 0.714rem; display: grid; place-items: center; overflow: hidden;
+    background: linear-gradient(135deg, hsl(var(--h) 55% 38%), hsl(calc(var(--h) + 50) 60% 18%)); transition: transform 0.08s; }
+  .pad.hit .art, .pad:active .art { transform: scale(0.94); }
+  .pad .bars { display: flex; align-items: center; gap: 0.286rem; height: 2.143rem; }
+  .pad .bars i { display: block; width: 0.286rem; border-radius: 0.143rem; background: rgba(255,255,255,0.92); }
+  .pad .bars i:nth-child(1), .pad .bars i:nth-child(5) { height: 34%; }
+  .pad .bars i:nth-child(2), .pad .bars i:nth-child(4) { height: 62%; }
+  .pad .bars i:nth-child(3) { height: 100%; }
+  .pad.sel .art { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+  .pad.err .art { filter: grayscale(0.8); }
+  .pad .nm { margin-top: 0.429rem; font-weight: 600; font-size: 0.929rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pad.err .nm { color: var(--bad); }
+  .empty { color: var(--dim); padding: 1.714rem 0.286rem; }
+
+  .ctl { display: grid; grid-template-columns: 1fr 1fr; gap: 0.429rem; flex: none; }
+  .ctl button { border-radius: 0.714rem; padding: 0.857rem 0; background: var(--card); font-weight: 600; }
+  .ctl button:active { background: var(--card-2); }
+  .ctl #stop { grid-column: 1 / -1; background: var(--accent); color: var(--accent-text); }
+  .vol { flex: none; padding: 0.286rem 0.143rem; }
+  .vol .top { display: flex; justify-content: space-between; color: var(--dim); font-size: 0.857rem; }
+  .vol input { width: 100%; accent-color: var(--accent); height: 2.143rem; margin: 0.143rem 0 0; }
+  .fx { display: flex; flex-wrap: wrap; gap: 0.429rem; }
+  .fx .chip { padding: 0.571rem 0.714rem; }
+  .tools { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.429rem; flex: none; }
+  .tools button { background: var(--card); border-radius: 0.714rem; padding: 0.643rem 0; color: var(--dim); font-weight: 600; }
+  .tools button:active { background: var(--card-2); }
+  .gear { background: var(--card); border-radius: 0.714rem; padding: 0.643rem 0; flex: none; color: var(--dim); }
+
+  /* ---- connect screen + messages ---- */
+  .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: var(--bg); z-index: 5;
+    padding: max(1.143rem, env(safe-area-inset-top)) max(1.143rem, env(safe-area-inset-right)) 1.143rem max(1.143rem, env(safe-area-inset-left)); }
+  .screen.show { display: flex; }
+  .card { width: min(40rem, 100%); display: flex; flex-direction: column; gap: 0.714rem; }
+  .card h1 { margin: 0; font-size: 1.429rem; }
+  .card p { margin: 0; color: var(--dim); }
+  .card input { width: 100%; border-radius: 0.714rem; padding: 0.857rem; background: var(--card); border: 1px solid var(--line); user-select: text; -webkit-user-select: text; }
+  .card .row { display: flex; gap: 0.571rem; }
+  .card .row button { flex: 1; border-radius: 0.714rem; padding: 0.857rem; background: var(--card); font-weight: 600; }
+  .card .row .go { background: var(--accent); color: var(--accent-text); }
+  .card .err { color: var(--bad); min-height: 1.286rem; }
+  #lost { flex-direction: column; text-align: center; gap: 0.857rem; color: var(--dim); }
+  #lost button { border-radius: 0.714rem; padding: 0.786rem 1.286rem; background: var(--card); color: var(--text); font-weight: 600; }
+  #lost .row { display: flex; gap: 0.571rem; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="col">
+    <div class="brand"><b>Rustboard</b><span id="dot" title="connected"></span></div>
+    <h2>Presets</h2>
+    <div class="scroll"><div class="list" id="presets"></div></div>
+    <div class="tools">
+      <button id="smaller" title="Smaller screen">A&minus;</button>
+      <button id="bigger" title="Bigger screen">A+</button>
+      <button id="change" title="Change PC">PC</button>
+    </div>
+  </div>
+
+  <div class="col">
+    <h2>Sounds</h2>
+    <div class="scroll"><div id="grid"></div></div>
+  </div>
+
+  <div class="col">
+    <div class="ctl">
+      <button id="pause">Pause</button>
+      <button id="resume">Continue</button>
+      <button id="stop">Stop all</button>
+    </div>
+    <div class="vol">
+      <div class="top"><span>Volume</span><output id="volv"></output></div>
+      <input id="vol" type="range" min="0" max="100">
+    </div>
+    <h2>Mic effect</h2>
+    <div class="scroll"><div class="fx" id="fx"></div></div>
+  </div>
+</div>
+
+<div class="screen" id="connect">
+  <div class="card">
+    <h1>Connect to Rustboard</h1>
+    <p>On the PC: Rustboard &gt; Settings &gt; Phone remote &gt; turn it on &gt; <b>Copy link</b>. Send the link to this phone, copy it, then press Paste.</p>
+    <input id="link" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.5:8787/?k=...">
+    <div class="err" id="cerr"></div>
+    <div class="row"><button id="paste">Paste</button><button class="go" id="go">Connect</button></div>
+    <p>Phone and PC must be on the same Wi-Fi.</p>
+  </div>
+</div>
+
+<div class="screen" id="lost">
+  <div id="lostmsg">Cannot reach Rustboard.</div>
+  <div class="row"><button id="retry">Try again</button><button id="lostchange">Change PC</button></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const FX_NAMES = { clean: 'Off', deep: 'Deep', chipmunk: 'Chipmunk', demon: 'Demon', giant: 'Giant', robot: 'Robot',
+  alien: 'Alien', radio: 'Radio', megaphone: 'Megaphone', cave: 'Cave', '8bit': '8-bit' };
+const KEY = 'rustboard.remote.link';
+
+let base = '', K = '';
+let S = null, volTimer = null, dragging = false, fails = 0, pollTimer = 0;
+
+// ---------- screen size ----------
+// Every size in the page is in rem. We set the root font size from the real screen, so a small phone
+// shrinks the whole page and a big one grows it. A- / A+ then fine tune it (saved on the phone).
+const SIZE_KEY = 'rustboard.remote.size';
+const DESIGN_W = 760, DESIGN_H = 340; // the layout was drawn for about this many CSS px
+let userSize = 1;
+try { userSize = parseFloat(localStorage.getItem(SIZE_KEY)) || 1; } catch (_) {}
+
+function applyScale() {
+  const auto = Math.min(window.innerWidth / DESIGN_W, window.innerHeight / DESIGN_H);
+  const s = Math.max(0.5, Math.min(1.6, auto * userSize));
+  document.documentElement.style.fontSize = (14 * s).toFixed(2) + 'px';
+}
+
+function bump(step) {
+  userSize = Math.max(0.6, Math.min(1.6, Math.round((userSize + step) * 100) / 100));
+  try { localStorage.setItem(SIZE_KEY, String(userSize)); } catch (_) {}
+  applyScale();
+}
+
+window.addEventListener('resize', applyScale);
+applyScale();
+
+// ---------- saved link ----------
+function saved() { try { return localStorage.getItem(KEY) || ''; } catch (_) { return ''; } }
+function save(v) { try { localStorage.setItem(KEY, v); } catch (_) {} }
+
+// "http://192.168.1.5:8787/?k=abc"  ->  { base, k }. Also accepts "192.168.1.5:8787/?k=abc".
+function parseLink(text) {
+  let t = String(text || '').trim();
+  if (!t) return null;
+  if (!/^https?:\/\//i.test(t)) t = 'http://' + t;
+  try {
+    const u = new URL(t);
+    const k = u.searchParams.get('k') || '';
+    if (!u.hostname || !k) return null;
+    return { base: `${u.protocol}//${u.host}`, k };
+  } catch (_) { return null; }
+}
+
+function buzz() { try { window.Android && Android.vibrate(12); } catch (_) {} }
+
+// ---------- api ----------
+async function api(path, params = {}) {
+  const qs = new URLSearchParams({ k: K, ...params }).toString();
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 4000);
+  try {
+    const res = await fetch(`${base}/api/${path}?${qs}`, { method: path === 'state' ? 'GET' : 'POST', cache: 'no-store', signal: ctl.signal });
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+
+// ---------- screens ----------
+function showConnect(msg = '') {
+  stopPoll();
+  $('app').classList.remove('show');
+  $('lost').classList.remove('show');
+  $('cerr').textContent = msg;
+  $('link').value = saved();
+  $('connect').classList.add('show');
+}
+
+function showLost(msg) {
+  $('lostmsg').textContent = msg;
+  $('lost').classList.add('show');
+}
+
+function startApp() {
+  $('connect').classList.remove('show');
+  $('lost').classList.remove('show');
+  $('app').classList.add('show');
+  fails = 0;
+  poll();
+  stopPoll();
+  pollTimer = setInterval(() => { if (!document.hidden && !dragging) poll(); }, 2000);
+}
+
+function stopPoll() { clearInterval(pollTimer); pollTimer = 0; }
+
+// ---------- drawing ----------
+function hueOf(name) { let h = 0; for (const c of name || '?') h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
+
+function chip(label, on, onclick) {
+  const b = document.createElement('button');
+  b.className = 'chip' + (on ? ' on' : '');
+  b.textContent = label;
+  b.onclick = () => { buzz(); onclick(); };
+  return b;
+}
+
+function draw() {
+  if (!S) return;
+  $('presets').replaceChildren(...S.presets.map((n, i) => chip(n || `Preset ${i + 1}`, i === S.preset, () => run('preset', { i }))));
+
+  const grid = $('grid');
+  if (!S.sounds.length) {
+    grid.replaceChildren(Object.assign(document.createElement('div'), { className: 'empty', textContent: 'No sounds in this preset.' }));
+  } else {
+    grid.replaceChildren(...S.sounds.map((s) => {
+      const b = document.createElement('button');
+      b.className = 'pad' + (s.i === S.selected ? ' sel' : '') + (s.error ? ' err' : '');
+      const art = document.createElement('div');
+      art.className = 'art';
+      art.style.setProperty('--h', hueOf(s.name));
+      art.innerHTML = '<div class="bars"><i></i><i></i><i></i><i></i><i></i></div>';
+      const nm = document.createElement('div');
+      nm.className = 'nm';
+      nm.textContent = s.name || `Sound ${s.i + 1}`;
+      b.append(art, nm);
+      b.onclick = () => { buzz(); b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 160); run('play', { p: S.preset, s: s.i }); };
+      return b;
+    }));
+  }
+
+  $('fx').replaceChildren(...S.fx_ids.map((id) =>
+    chip(FX_NAMES[id] || id, id === 'clean' ? !S.fx_on : S.fx_on && S.fx === id, () => run('fx', { id }))));
+
+  if (!dragging) { $('vol').value = S.volume; $('volv').textContent = S.volume + '%'; }
+}
+
+async function run(path, params) {
+  try { S = await api(path, params); $('dot').classList.remove('off'); draw(); }
+  catch (e) { $('dot').classList.add('off'); fail(e); }
+}
+
+function fail(e) {
+  const text = String((e && e.message) || e);
+  if (/Wrong link/.test(text)) { showConnect('Wrong link. Copy the link again on the PC (Settings > Phone remote).'); return; }
+  fails += 1;
+  if (fails >= 2) { stopPoll(); showLost('Cannot reach Rustboard. Is the app open on your PC, and is Phone remote on?'); }
+}
+
+async function poll() {
+  try {
+    S = await api('state');
+    fails = 0;
+    $('dot').classList.remove('off');
+    $('lost').classList.remove('show');
+    draw();
+  } catch (e) { $('dot').classList.add('off'); fail(e); }
+}
+
+// ---------- buttons ----------
+for (const [id, path] of [['pause', 'pause'], ['resume', 'resume'], ['stop', 'stop']]) {
+  $(id).onclick = () => { buzz(); run(path); };
+}
+
+$('vol').addEventListener('pointerdown', () => { dragging = true; });
+$('vol').addEventListener('pointerup', () => { dragging = false; });
+$('vol').addEventListener('pointercancel', () => { dragging = false; });
+$('vol').addEventListener('input', (e) => {
+  const v = e.target.value;
+  $('volv').textContent = v + '%';
+  clearTimeout(volTimer);
+  volTimer = setTimeout(() => run('volume', { v }), 120);
+});
+
+$('change').onclick = () => showConnect();
+$('smaller').onclick = () => bump(-0.1);
+$('bigger').onclick = () => bump(0.1);
+$('lostchange').onclick = () => showConnect();
+$('retry').onclick = () => { $('lost').classList.remove('show'); startApp(); };
+
+$('paste').onclick = () => {
+  try { if (window.Android) $('link').value = Android.paste(); } catch (_) {}
+};
+
+$('go').onclick = () => {
+  const p = parseLink($('link').value);
+  if (!p) { $('cerr').textContent = 'This is not a Rustboard link. It looks like http://192.168.1.5:8787/?k=...'; return; }
+  base = p.base; K = p.k;
+  $('app').dataset.ready = '1';
+  save($('link').value.trim());
+  startApp();
+};
+$('link').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('go').click(); });
+
+// Android back button: close a screen if one is open (true = handled)
+window.onBack = () => {
+  if ($('connect').classList.contains('show') && $('app').dataset.ready === '1') { startApp(); return true; }
+  if ($('lost').classList.contains('show')) { showConnect(); return true; }
+  return false;
+};
+window.onWake = () => { if ($('app').classList.contains('show')) poll(); };
+
+// ---------- start ----------
+(function init() {
+  const p = parseLink(saved());
+  if (p) { base = p.base; K = p.k; $('app').dataset.ready = '1'; startApp(); }
+  else showConnect();
+})();
+</script>
+</body>
+</html>

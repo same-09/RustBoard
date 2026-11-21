@@ -1,0 +1,74 @@
+name: Build Android remote
+
+# The phone remote as an APK (landscape app). On a tag it is added to the same GitHub Release
+# as the Windows setup. Other pushes only test the build and keep the APK for 7 days.
+on:
+  push:
+    branches: [ main, master ]
+    paths: [ 'android/**', '.github/workflows/android.yml' ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The runner already has the Android SDK ($ANDROID_HOME). We only accept the licenses and make
+      # sure Android 34 is there. (android-actions/setup-android fails: it asks for the old 'tools' package.)
+      - name: Android SDK
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-34" "build-tools;34.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      # tag v0.1.7 -> versionName 0.1.7, versionCode 107 (the phone needs a bigger code to update)
+      - name: Version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+            IFS=. read -r MA MI PA <<< "$V"
+            echo "RB_VERSION_NAME=$V" >> "$GITHUB_ENV"
+            echo "RB_VERSION_CODE=$(( ${MA:-0} * 10000 + ${MI:-0} * 100 + ${PA:-0} ))" >> "$GITHUB_ENV"
+            echo "APK_NAME=Rustboard-Remote_$V.apk" >> "$GITHUB_ENV"
+          else
+            echo "RB_VERSION_NAME=0.0.0-dev" >> "$GITHUB_ENV"
+            echo "RB_VERSION_CODE=1" >> "$GITHUB_ENV"
+            echo "APK_NAME=Rustboard-Remote_dev.apk" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        run: gradle -p android assembleRelease --no-daemon
+
+      - name: Name the APK
+        run: |
+          mkdir -p dist-apk
+          cp android/app/build/outputs/apk/release/app-release.apk "dist-apk/$APK_NAME"
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Rustboard ${{ github.ref_name }}
+          files: dist-apk/*.apk
+
+      - name: Keep the APK (no tag)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rustboard-Remote-apk
+          path: dist-apk/*.apk
+          retention-days: 7

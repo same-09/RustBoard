@@ -6,15 +6,17 @@ mod config;
 mod fx;
 mod hotkeys;
 mod images;
+mod library;
 mod links;
 mod logic;
+mod remote;
 mod state;
 mod updater;
 
 use audio::{AudioCmd, AudioSettings, Devices, Levels, LevelsOut, LiveStatus, SoundLevelOut};
 use config::Config;
 use state::AppState;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -53,7 +55,7 @@ fn get_state(state: State<'_, AppState>) -> Result<Config, String> {
 
 /// UI sends the whole config after each edit. Returns it back with fresh errors.
 #[tauri::command]
-fn set_config(state: State<'_, AppState>, config: Config) -> Result<Config, String> {
+fn set_config(app: tauri::AppHandle, state: State<'_, AppState>, config: Config) -> Result<Config, String> {
     let mut new = config;
     new.normalize();
     let mut cur = state.config.lock().map_err(|e| e.to_string())?;
@@ -67,7 +69,25 @@ fn set_config(state: State<'_, AppState>, config: Config) -> Result<Config, Stri
     state.send(AudioCmd::Configure(AudioSettings::from_config(&new)));
     state.persist(&new);
     *cur = new.clone();
+    drop(cur);
+    remote::apply(&app, new.remote_on, new.remote_port);
     Ok(new)
+}
+
+/// Phone remote: link, QR picture and whether the server runs.
+#[tauri::command]
+fn remote_info(state: State<'_, AppState>) -> Result<remote::Info, String> {
+    let cfg = state.config.lock().map_err(|e| e.to_string())?;
+    Ok(remote::info(&cfg))
+}
+
+/// Make a new secret for the phone link. Old links stop working.
+#[tauri::command]
+fn remote_new_token(state: State<'_, AppState>) -> Result<Config, String> {
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    cfg.remote_token = config::new_token();
+    state.persist(&cfg);
+    Ok(cfg.clone())
 }
 
 /// Switch preset from the UI.
@@ -153,6 +173,52 @@ fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// `Documents/RustBoard/Soundboard`: the copies of every sound file you add.
+/// (Falls back to the app data folder if Windows has no Documents folder.)
+fn soundboard_dir(app: &tauri::AppHandle, state: &AppState) -> PathBuf {
+    let base = app
+        .path()
+        .document_dir()
+        .ok()
+        .map(|d| d.join("RustBoard"))
+        .or_else(|| state.path.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("RustBoard"));
+    base.join(library::FOLDER)
+}
+
+/// Copy picked sound files into the Soundboard folder. Returns the new paths for the config.
+/// Runs on a worker thread: copying big files must not freeze the window.
+#[tauri::command(async)]
+fn import_files(app: tauri::AppHandle, state: State<'_, AppState>, paths: Vec<String>) -> Result<library::ImportOut, String> {
+    let list: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    library::import(&soundboard_dir(&app, &state), &list)
+}
+
+/// "Import folder": every sound file in the folder (and its sub-folders) is copied into the
+/// Soundboard folder. The UI makes one sound for each file.
+#[tauri::command(async)]
+fn import_folder(app: tauri::AppHandle, state: State<'_, AppState>, folder: String) -> Result<library::ImportOut, String> {
+    let list = library::scan(Path::new(&folder))?;
+    if list.is_empty() {
+        return Err("No sound files in this folder (mp3, wav, ogg, flac, m4a, aac, aiff).".into());
+    }
+    library::import(&soundboard_dir(&app, &state), &list)
+}
+
+/// Show the Soundboard folder in the file manager.
+#[tauri::command]
+fn open_soundboard_folder(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let dir = soundboard_dir(&app, &state);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("explorer");
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(&dir).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// Open one of our own links (new release, VB-CABLE site) in the default browser.
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -214,11 +280,21 @@ fn main() {
             });
 
             hotkeys::spawn(app.handle().clone());
+            {
+                let st = app.state::<AppState>();
+                let (on, port) = st.config.lock().map(|c| (c.remote_on, c.remote_port)).unwrap_or((false, 0));
+                remote::apply(app.handle(), on, port);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
             set_config,
+            remote_info,
+            remote_new_token,
+            import_files,
+            import_folder,
+            open_soundboard_folder,
             select_preset,
             play_sound,
             audio_pause,

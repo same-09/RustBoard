@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0b0c">
+<title>Rustboard Remote</title>
+<style>
+  :root {
+    --bg: #0b0b0c; --card: #1a1a1d; --card-2: #232327; --line: #2e2e33;
+    --text: #f2f2f3; --dim: #9a9aa3; --accent: #e8e8ec; --accent-text: #0b0b0c; --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 2px 8px; }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: #3ddc84; }
+  #dot.off { background: var(--bad); }
+  .row { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+  .row::-webkit-scrollbar { display: none; }
+  .chip { flex: none; border: 0; border-radius: 999px; padding: 9px 14px; background: var(--card); color: var(--text);
+    font: inherit; font-weight: 600; }
+  .chip.on { background: var(--accent); color: var(--accent-text); }
+  h2 { margin: 6px 2px 8px; font-size: 12px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+  main { flex: 1; overflow-y: auto; padding-bottom: 8px; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+  .pad { border: 0; border-radius: 16px; min-height: 92px; padding: 10px; background: var(--card); color: var(--text);
+    font: inherit; font-weight: 600; word-break: break-word; display: flex; align-items: center; justify-content: center; text-align: center;
+    box-shadow: inset 0 0 0 1px var(--line); transition: transform 0.08s, background 0.15s; }
+  .pad:active, .pad.hit { transform: scale(0.95); background: var(--card-2); }
+  .pad.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+  .pad.err { color: var(--bad); }
+  .empty { color: var(--dim); padding: 24px 4px; }
+  footer { padding: 10px 0 12px; border-top: 1px solid var(--line); background: var(--bg); }
+  .ctl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+  .ctl button { border: 0; border-radius: 12px; padding: 13px 0; background: var(--card); color: var(--text); font: inherit; font-weight: 600; }
+  .ctl button:active { background: var(--card-2); }
+  .vol { display: flex; align-items: center; gap: 10px; color: var(--dim); }
+  .vol input { flex: 1; accent-color: var(--accent); height: 28px; }
+  .vol output { width: 40px; text-align: right; }
+  #msg { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; text-align: center;
+    background: var(--bg); color: var(--dim); z-index: 5; }
+  #msg.show { display: flex; }
+</style>
+</head>
+<body>
+<header><h1>Rustboard</h1><span id="dot" title="connected"></span></header>
+
+<div class="row" id="presets"></div>
+
+<main>
+  <h2>Sounds</h2>
+  <div id="grid"></div>
+  <h2 style="margin-top:16px">Mic effect</h2>
+  <div class="row" id="fx"></div>
+</main>
+
+<footer>
+  <div class="ctl">
+    <button id="pause">Pause</button>
+    <button id="resume">Continue</button>
+    <button id="stop">Stop all</button>
+  </div>
+  <div class="vol"><span>Vol</span><input id="vol" type="range" min="0" max="100"><output id="volv"></output></div>
+</footer>
+
+<div id="msg"></div>
+
+<script>
+const K = new URLSearchParams(location.search).get('k') || '';
+const FX_NAMES = { clean: 'Off', deep: 'Deep', chipmunk: 'Chipmunk', demon: 'Demon', giant: 'Giant', robot: 'Robot',
+  alien: 'Alien', radio: 'Radio', megaphone: 'Megaphone', cave: 'Cave', '8bit': '8-bit' };
+const $ = (id) => document.getElementById(id);
+let S = null, volTimer = null, dragging = false;
+
+function buzz() { try { navigator.vibrate && navigator.vibrate(12); } catch (_) {} }
+
+async function api(path, params = {}) {
+  const qs = new URLSearchParams({ k: K, ...params }).toString();
+  const res = await fetch(`/api/${path}?${qs}`, { method: path === 'state' ? 'GET' : 'POST', cache: 'no-store' });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+function show(msg) { $('msg').textContent = msg || ''; $('msg').classList.toggle('show', !!msg); }
+
+function chip(label, on, onclick) {
+  const b = document.createElement('button');
+  b.className = 'chip' + (on ? ' on' : '');
+  b.textContent = label;
+  b.onclick = () => { buzz(); onclick(); };
+  return b;
+}
+
+function draw() {
+  if (!S) return;
+  $('presets').replaceChildren(...S.presets.map((n, i) => chip(n || `Preset ${i + 1}`, i === S.preset, () => run('preset', { i }))));
+
+  const grid = $('grid');
+  if (!S.sounds.length) {
+    grid.replaceChildren(Object.assign(document.createElement('div'), { className: 'empty', textContent: 'No sounds in this preset.' }));
+  } else {
+    grid.replaceChildren(...S.sounds.map((s) => {
+      const b = document.createElement('button');
+      b.className = 'pad' + (s.i === S.selected ? ' sel' : '') + (s.error ? ' err' : '');
+      b.textContent = s.name || `Sound ${s.i + 1}`;
+      b.onclick = () => { buzz(); b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 160); run('play', { p: S.preset, s: s.i }); };
+      return b;
+    }));
+  }
+
+  $('fx').replaceChildren(...S.fx_ids.map((id) =>
+    chip(FX_NAMES[id] || id, id === 'clean' ? !S.fx_on : S.fx_on && S.fx === id, () => run('fx', { id }))));
+
+  if (!dragging) { $('vol').value = S.volume; $('volv').textContent = S.volume + '%'; }
+}
+
+async function run(path, params) {
+  try { S = await api(path, params); show(''); draw(); }
+  catch (e) { show('Cannot reach Rustboard. Is the app open on your PC?'); }
+}
+
+for (const [id, path] of [['pause', 'pause'], ['resume', 'resume'], ['stop', 'stop']]) {
+  $(id).onclick = () => { buzz(); run(path); };
+}
+
+$('vol').addEventListener('pointerdown', () => { dragging = true; });
+$('vol').addEventListener('pointerup', () => { dragging = false; });
+$('vol').addEventListener('input', (e) => {
+  const v = e.target.value;
+  $('volv').textContent = v + '%';
+  clearTimeout(volTimer);
+  volTimer = setTimeout(() => run('volume', { v }), 120);
+});
+
+async function poll() {
+  try {
+    const next = await api('state');
+    S = next; $('dot').classList.remove('off'); show(''); draw();
+  } catch (e) {
+    $('dot').classList.add('off');
+    show(/Wrong link/.test(String(e.message)) ? 'Wrong link. Scan the QR code again in Rustboard > Settings > Phone remote.' : 'Cannot reach Rustboard. Is the app open on your PC?');
+  }
+}
+poll();
+setInterval(() => { if (!document.hidden && !dragging) poll(); }, 2500);
+</script>
+</body>
+</html>

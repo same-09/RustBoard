@@ -15,6 +15,21 @@ use std::thread;
 
 pub const DEFAULT_IN: &str = "Default Input Device";
 
+// ---- ducking + limiter ----
+/// Ducking: while you speak, sounds on the mic output drop to this gain (about -10 dB).
+const DUCK_GAIN: f32 = 0.3;
+/// How fast the sound goes down when you start to speak, and comes back when you stop.
+const DUCK_ATTACK_S: f32 = 0.04;
+const DUCK_RELEASE_S: f32 = 0.45;
+/// Your mic counts as "speaking" above this level (linear RMS, after the gate) ...
+const SPEAK_THRESHOLD: f32 = 0.015;
+/// ... and a short pause between words does not end it.
+const SPEAK_HOLD_MS: u128 = 400;
+/// Limiter ceilings. Sounds and mic are mixed by the virtual cable, so the two ceilings
+/// together stay near 1.0: a loud sound plus a loud voice should not clip.
+const SOUND_CEILING: f32 = 0.95;
+const MIC_CEILING: f32 = 0.5;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioSettings {
     pub volume: f32,
@@ -32,6 +47,10 @@ pub struct AudioSettings {
     pub gate_threshold: f32,
     /// mic sound effect: 0 = off, else the preset index in `fx::IDS`
     pub fx: u32,
+    /// sounds get quieter while you speak (on the output that carries your mic)
+    pub duck_on: bool,
+    /// stops loud peaks (sounds and mic) from clipping
+    pub limiter_on: bool,
 }
 
 impl AudioSettings {
@@ -50,6 +69,8 @@ impl AudioSettings {
             gate_on: c.gate_on,
             gate_threshold: 10f32.powf(c.gate_threshold_db as f32 / 20.0),
             fx: crate::fx::active_index(c.fx_on, &c.fx_preset),
+            duck_on: c.duck_on,
+            limiter_on: c.limiter_on,
         }
     }
 }
@@ -102,6 +123,11 @@ pub struct Levels {
     output: AtomicU32,
     active: AtomicBool,
     gate_open: AtomicBool,
+    /// your voice is on the mic right now (with a short hold), written by the mic thread
+    speaking: AtomicBool,
+    /// settings the sound and mic threads read while they run
+    duck_on: AtomicBool,
+    limiter_on: AtomicBool,
     /// what the soundboard itself plays: loudest RMS per frequency band since the last read
     bands: [AtomicU32; BANDS],
     /// file of the sound that was started last (the UI matches it to a tile)
@@ -258,7 +284,7 @@ impl Gate {
 // ---------- output ----------
 
 struct Output {
-    #[allow(dead_code)]
+    /// the device name as chosen in Settings (compared with the mic output for ducking)
     name: String,
     _stream: OutputStream,
     handle: OutputStreamHandle,
@@ -311,7 +337,7 @@ impl Output {
         self.update_levels();
     }
 
-    fn play(&mut self, file: &str, volume: f32, looped: bool, overlap: bool, fx: u32) -> Result<(), String> {
+    fn play(&mut self, file: &str, volume: f32, looped: bool, overlap: bool, fx: u32, duck: bool) -> Result<(), String> {
         self.sinks.retain(|(s, _)| !s.empty());
         if !overlap {
             self.stop();
@@ -324,15 +350,15 @@ impl Output {
         let lv = &self.levels;
         if fx == 0 {
             if looped {
-                sink.append(Tap::new(source.buffered().repeat_infinite().convert_samples::<f32>(), Arc::clone(lv)));
+                sink.append(Tap::new(source.buffered().repeat_infinite().convert_samples::<f32>(), Arc::clone(lv), duck));
             } else {
-                sink.append(Tap::new(source.convert_samples::<f32>(), Arc::clone(lv)));
+                sink.append(Tap::new(source.convert_samples::<f32>(), Arc::clone(lv), duck));
             }
         } else if looped {
             let fxs = FxSource::new(source.buffered().repeat_infinite().convert_samples::<f32>(), fx);
-            sink.append(Tap::new(fxs, Arc::clone(lv)));
+            sink.append(Tap::new(fxs, Arc::clone(lv), duck));
         } else {
-            sink.append(Tap::new(FxSource::new(source.convert_samples::<f32>(), fx), Arc::clone(lv)));
+            sink.append(Tap::new(FxSource::new(source.convert_samples::<f32>(), fx), Arc::clone(lv), duck));
         }
         self.sinks.push((sink, volume));
         Ok(())
@@ -398,7 +424,29 @@ impl<S: Source<Item = f32>> Source for FxSource<S> {
     }
 }
 
-/// Passes a sound through untouched and measures it: the RMS of five frequency bands per
+/// Peak limiter: nothing gets above `ceiling`. The gain drops at once for a peak and comes
+/// back slowly (about 80 ms), so loud parts get a little quieter instead of crackling.
+struct Limiter {
+    gain: f32,
+    release: f32,
+}
+
+impl Limiter {
+    fn new(rate: u32) -> Self {
+        Limiter { gain: 1.0, release: 1.0 - (-1.0 / (0.08 * rate.max(8000) as f32)).exp() }
+    }
+
+    fn process(&mut self, x: f32, ceiling: f32) -> f32 {
+        let a = x.abs();
+        let need = if a > ceiling { ceiling / a } else { 1.0 };
+        // down at once for a peak; up slowly, but never above what this sample allows
+        let released = self.gain + (1.0 - self.gain) * self.release;
+        self.gain = released.min(need);
+        x * self.gain
+    }
+}
+
+/// Passes a sound through and measures it: the RMS of five frequency bands per
 /// ~20 ms block goes to `Levels` (the UI polls it and moves the white bars on the tile).
 /// The bands come from one-pole low-pass splitters on the mono mix. Cheap, no FFT.
 struct Tap<S: Source<Item = f32>> {
@@ -413,10 +461,16 @@ struct Tap<S: Source<Item = f32>> {
     acc: [f32; BANDS],
     frames: u32,
     block: u32,
+    /// this sound goes to the output that carries the mic, so it ducks while you speak
+    duck: bool,
+    duck_gain: f32,
+    duck_attack: f32,
+    duck_release: f32,
+    limiter: Limiter,
 }
 
 impl<S: Source<Item = f32>> Tap<S> {
-    fn new(inner: S, levels: Arc<Levels>) -> Self {
+    fn new(inner: S, levels: Arc<Levels>, duck: bool) -> Self {
         let channels = inner.channels().max(1);
         let rate = inner.sample_rate().max(8000);
         let mut alpha = [0.0f32; BANDS - 1];
@@ -435,6 +489,28 @@ impl<S: Source<Item = f32>> Tap<S> {
             acc: [0.0; BANDS],
             frames: 0,
             block: (rate / 50).max(256),
+            duck,
+            duck_gain: 1.0,
+            duck_attack: 1.0 - (-1.0 / (DUCK_ATTACK_S * rate as f32)).exp(),
+            duck_release: 1.0 - (-1.0 / (DUCK_RELEASE_S * rate as f32)).exp(),
+            limiter: Limiter::new(rate),
+        }
+    }
+
+    /// Once per frame: move the ducking gain toward "quiet" while you speak, else toward 1.
+    fn update_duck(&mut self) {
+        let target = if self.duck
+            && self.levels.duck_on.load(Ordering::Relaxed)
+            && self.levels.speaking.load(Ordering::Relaxed)
+        {
+            DUCK_GAIN
+        } else {
+            1.0
+        };
+        let c = if target < self.duck_gain { self.duck_attack } else { self.duck_release };
+        self.duck_gain += (target - self.duck_gain) * c;
+        if target == 1.0 && (1.0 - self.duck_gain) < 1e-4 {
+            self.duck_gain = 1.0; // settled: exactly 1, so the sound passes untouched
         }
     }
 
@@ -476,6 +552,10 @@ impl<S: Source<Item = f32>> Iterator for Tap<S> {
         let s = self.inner.next();
         match s {
             Some(x) => {
+                if self.frame_pos == 0 {
+                    self.update_duck();
+                }
+                // the bars on the tile see the sound as it is, before ducking and limiting
                 self.frame_sum += x;
                 self.frame_pos += 1;
                 if self.frame_pos >= self.channels {
@@ -484,10 +564,17 @@ impl<S: Source<Item = f32>> Iterator for Tap<S> {
                     self.frame_pos = 0;
                     self.feed(mono);
                 }
+                let mut y = x * self.duck_gain;
+                if self.levels.limiter_on.load(Ordering::Relaxed) {
+                    y = self.limiter.process(y, SOUND_CEILING);
+                }
+                Some(y)
             }
-            None => self.flush(),
+            None => {
+                self.flush();
+                None
+            }
         }
-        s
     }
 }
 
@@ -555,6 +642,7 @@ struct Mic {
 impl Drop for Mic {
     fn drop(&mut self) {
         self.levels.active.store(false, Ordering::Relaxed);
+        self.levels.speaking.store(false, Ordering::Relaxed);
     }
 }
 
@@ -607,6 +695,7 @@ impl Mic {
         let mut fx_now: u32 = 0;
         let mut fx_chain = crate::fx::build(0, in_rate);
         let mut mono: Vec<f32> = Vec::with_capacity(4096);
+        let mut last_voice: Option<std::time::Instant> = None;
         let input = in_dev
             .build_input_stream(
                 &in_conf,
@@ -630,7 +719,14 @@ impl Mic {
                         fx_chain.process(&mut mono);
                     }
                     let v = f32::from_bits(in_vol.load(Ordering::Relaxed));
-                    in_levels.note(level_in, rms(&mono) * v, gate.is_open());
+                    let level_out = rms(&mono);
+                    in_levels.note(level_in, level_out * v, gate.is_open());
+                    // "speaking" for ducking: voice after the gate, with a short hold
+                    if level_out > SPEAK_THRESHOLD {
+                        last_voice = Some(std::time::Instant::now());
+                    }
+                    let speaking = last_voice.map(|t| t.elapsed().as_millis() < SPEAK_HOLD_MS).unwrap_or(false);
+                    in_levels.speaking.store(speaking, Ordering::Relaxed);
                     if let Ok(mut q) = in_buf.lock() {
                         q.extend(mono.iter().copied());
                         while q.len() > max_samples {
@@ -645,6 +741,8 @@ impl Mic {
 
         let out_buf = Arc::clone(&buffer);
         let out_vol = Arc::clone(&vol);
+        let out_levels = Arc::clone(&levels);
+        let mut mic_limiter = Limiter::new(out_rate);
         let mut resampler = Resampler::new(in_rate, out_rate);
         let mut primed = false;
         let output = out_dev
@@ -668,6 +766,11 @@ impl Mic {
                                 }
                             },
                             _ => 0.0,
+                        };
+                        let s = if out_levels.limiter_on.load(Ordering::Relaxed) {
+                            mic_limiter.process(s, MIC_CEILING)
+                        } else {
+                            s
                         };
                         for sample in frame.iter_mut() {
                             *sample = s;
@@ -822,6 +925,8 @@ struct Engine {
 
 impl Engine {
     fn configure(&mut self, s: AudioSettings) {
+        self.levels.duck_on.store(s.duck_on, Ordering::Relaxed);
+        self.levels.limiter_on.store(s.limiter_on, Ordering::Relaxed);
         self.settings = Some(s);
         self.apply();
     }
@@ -971,9 +1076,13 @@ impl Engine {
         self.retry_missing_outputs();
         let overlap = self.settings.as_ref().map(|s| s.overlap).unwrap_or(false);
         self.levels.set_sound_file(file);
+        // ducking only on the output that carries the mic (the cable while Go Live is on)
+        let mic_out = self.applied.as_ref().map(|r| r.mic_out.clone()).unwrap_or_default();
+        let mic_on = self.mic.is_some();
         let mut errors = Vec::new();
         for out in [self.primary.as_mut(), self.secondary.as_mut()].into_iter().flatten() {
-            if let Err(e) = out.play(file, volume, looped, overlap, fx) {
+            let duck = mic_on && out.name == mic_out;
+            if let Err(e) = out.play(file, volume, looped, overlap, fx, duck) {
                 errors.push(e);
             }
         }
@@ -1072,6 +1181,7 @@ mod tests {
             live_output: AUTO_CABLE.into(),
             gate_on: false, gate_threshold: 0.003,
             fx: 0,
+            duck_on: false, limiter_on: true,
         }
     }
 
@@ -1229,13 +1339,73 @@ mod tests {
             .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 60.0 * i as f32 / rate as f32).sin())
             .collect();
         let levels = Arc::new(Levels::default());
-        let tap = Tap::new(SamplesBuffer::new(1, rate, wave.clone()), Arc::clone(&levels));
+        let tap = Tap::new(SamplesBuffer::new(1, rate, wave.clone()), Arc::clone(&levels), false);
         let out: Vec<f32> = tap.collect();
         assert_eq!(out, wave); // untouched
         let r = levels.take_sound();
         assert!(r.bands[0] > 0.2, "bass band: {:?}", r.bands);
         assert!(r.bands[4] < 0.05, "treble band: {:?}", r.bands);
         assert_eq!(levels.take_sound().bands, [0.0; BANDS]); // read once, then start over
+    }
+
+    fn tap_out(samples: Vec<f32>, levels: &Arc<Levels>, duck: bool) -> Vec<f32> {
+        use rodio::buffer::SamplesBuffer;
+        Tap::new(SamplesBuffer::new(1, 44_100, samples), Arc::clone(levels), duck).collect()
+    }
+
+    #[test]
+    fn ducking_lowers_the_sound_while_you_speak_and_brings_it_back() {
+        let levels = Arc::new(Levels::default());
+        levels.duck_on.store(true, Ordering::Relaxed);
+        let steady = vec![0.5f32; 44_100];
+
+        // not speaking: untouched
+        assert_eq!(tap_out(steady.clone(), &levels, true), steady);
+
+        // speaking: it goes down to about DUCK_GAIN
+        levels.speaking.store(true, Ordering::Relaxed);
+        let out = tap_out(steady.clone(), &levels, true);
+        let end = out[out.len() - 1];
+        assert!((end - 0.5 * DUCK_GAIN).abs() < 0.01, "ducked level: {end}");
+        assert!(out[0] > end, "it goes down smoothly, not in one step");
+
+        // this sound does not go to the mic output: no ducking
+        assert_eq!(tap_out(steady.clone(), &levels, false), steady);
+
+        // switch off: untouched again, even while speaking
+        levels.duck_on.store(false, Ordering::Relaxed);
+        assert_eq!(tap_out(steady.clone(), &levels, true), steady);
+    }
+
+    #[test]
+    fn limiter_keeps_peaks_under_the_ceiling_and_leaves_quiet_sound_alone() {
+        let levels = Arc::new(Levels::default());
+        let loud: Vec<f32> = (0..44_100)
+            .map(|i| 2.0 * (2.0 * std::f32::consts::PI * 220.0 * i as f32 / 44_100.0).sin())
+            .collect();
+        // off: loud stays loud
+        let off = tap_out(loud.clone(), &levels, false);
+        assert!(off.iter().any(|x| x.abs() > 1.5));
+
+        levels.limiter_on.store(true, Ordering::Relaxed);
+        let on = tap_out(loud, &levels, false);
+        assert!(on.iter().all(|x| x.abs() <= SOUND_CEILING + 1e-4), "peak: {:?}", on.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs())));
+
+        let quiet: Vec<f32> = (0..44_100)
+            .map(|i| 0.3 * (2.0 * std::f32::consts::PI * 220.0 * i as f32 / 44_100.0).sin())
+            .collect();
+        assert_eq!(tap_out(quiet.clone(), &levels, false), quiet);
+    }
+
+    #[test]
+    fn mic_limiter_caps_at_its_ceiling() {
+        let mut l = Limiter::new(48_000);
+        let peak = (0..48_000)
+            .map(|i| l.process(1.5 * (i as f32 * 0.05).sin(), MIC_CEILING).abs())
+            .fold(0.0f32, f32::max);
+        assert!(peak <= MIC_CEILING + 1e-4, "peak {peak}");
+        let mut l = Limiter::new(48_000);
+        assert_eq!(l.process(0.2, MIC_CEILING), 0.2);
     }
 
     #[test]

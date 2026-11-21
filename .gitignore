@@ -12,3 +12,10 @@ setup/src-tauri/gen/
 setup/src-tauri/payload/*.exe
 setup/dist/
 dist-setup/
+
+# Android remote
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk

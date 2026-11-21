@@ -1,0 +1,40 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.rustboard.remote'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.rustboard.remote'
+        minSdk 24
+        targetSdk 34
+        // the GitHub workflow sets these from the tag (v0.1.7 -> 0.1.7)
+        versionCode Integer.parseInt(System.getenv('RB_VERSION_CODE') ?: '1')
+        versionName System.getenv('RB_VERSION_NAME') ?: '0.1.0'
+    }
+
+    // A fixed key, so a new build installs OVER the old app (a random key each build would not).
+    // The key is public in this repo: fine for a private soundboard remote, not for the Play Store.
+    signingConfigs {
+        release {
+            storeFile file('../rustboard-remote.keystore')
+            storePassword 'rustboard'
+            keyAlias 'rustboard'
+            keyPassword 'rustboard'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

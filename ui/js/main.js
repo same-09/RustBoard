@@ -1,4 +1,4 @@
-import { call, listen, pickFiles, isTauri } from './api.js';
+import { call, listen, pickFiles, pickFolder, isTauri } from './api.js';
 import { prettyKey, codeToName } from './keys.js';
 
 /* ---------- tiny helpers ---------- */
@@ -24,6 +24,7 @@ function h(tag, attrs = {}, ...kids) {
 
 const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   minus: '<path d="M5 12h14"/>',
   play: '<path d="M7 4l13 8-13 8z"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
@@ -149,6 +150,36 @@ async function playSound(i) {
     await sync();
     await call('play_sound', { preset: cfg.selected_preset, sound: i });
     wave.lastPoll = 0; // look at the level right away, no wait
+  } catch (e) {
+    toast(e, true);
+  }
+}
+
+// "Import folder": every sound file in a folder becomes its own sound (named like the file).
+// Files are copied to the Soundboard folder. Files already on the board are not added twice.
+async function importFolder() {
+  const dir = await pickFolder();
+  if (!dir) return;
+  try {
+    const r = await call('import_folder', { folder: dir });
+    const p = preset();
+    const used = new Set(p.sounds.flatMap((s) => s.files));
+    const fresh = [];
+    for (const f of r.files) {
+      if (used.has(f.path)) continue;
+      used.add(f.path);
+      fresh.push({ name: f.name, files: [f.path], keys: [], volume: 100, loop: false, fx: 'clean', image: '', error: null });
+    }
+    if (!fresh.length) {
+      toast('Nothing new: these sounds are already on the board.');
+      return;
+    }
+    p.selected_sound = p.sounds.length;
+    p.sounds.push(...fresh);
+    commit();
+    renderSounds();
+    const n = fresh.length;
+    toast(`Imported ${n} sound${n === 1 ? '' : 's'}${r.skipped ? `, ${r.skipped} skipped` : ''}. Copies are in ${r.folder}`, false, 6000);
   } catch (e) {
     toast(e, true);
   }
@@ -431,7 +462,15 @@ function openSoundDialog(d, onSave) {
         h('button', {
           onclick: async () => {
             const picked = await pickFiles({ multiple: true, filters: AUDIO_FILTER });
-            for (const f of picked) if (!d.files.includes(f)) d.files.push(f);
+            if (!picked.length) return;
+            try {
+              // copies go to the Soundboard folder, the sound keeps the copy
+              const r = await call('import_files', { paths: picked });
+              for (const f of r.files) if (!d.files.includes(f.path)) d.files.push(f.path);
+              if (r.skipped) toast(`${r.skipped} file${r.skipped === 1 ? '' : 's'} skipped (not a sound file or cannot be read).`, true);
+            } catch (e) {
+              toast(e, true);
+            }
             paintFiles();
           },
         }, 'Add files…'))),
@@ -948,6 +987,75 @@ function buildSettings() {
       meters);
   };
 
+  // Live mix: ducking (sounds get quieter while you speak) and the limiter. Each has a switch.
+  const liveMixSection = () => {
+    const duckSwitch = h('input', {
+      type: 'checkbox', checked: cfg.duck_on,
+      onchange: (e) => { cfg.duck_on = e.target.checked; commit(); },
+    });
+    const limiterSwitch = h('input', {
+      type: 'checkbox', checked: cfg.limiter_on,
+      onchange: (e) => { cfg.limiter_on = e.target.checked; commit(); },
+    });
+    return section('Live mix',
+      row('Ducking', 'Sounds get quieter while you speak, so your friends hear you. Works on the output that carries your mic (Go Live). Needs the mic on.', duckSwitch),
+      row('Limiter', 'Stops loud peaks from crackling in Discord. Applies to sounds and to your mic.', limiterSwitch));
+  };
+
+  // Phone remote: a web page on your Wi-Fi, like a Stream Deck. Off by default.
+  const remoteSection = () => {
+    const box = h('div', { class: 'set-row col remote-box' });
+    box.hidden = !cfg.remote_on;
+
+    const paint = async () => {
+      if (!cfg.remote_on) return;
+      await sync(); // Rust must have the switch and the port before we ask
+      try {
+        const r = await call('remote_info');
+        const qr = h('div', { class: 'remote-qr' });
+        qr.innerHTML = r.qr; // our own SVG from Rust
+        box.replaceChildren(
+          h('div', { class: 'remote-wrap' },
+            qr,
+            h('div', { class: 'remote-txt' },
+              h('div', { class: r.running ? 'ok' : 'warn' }, r.running ? 'Running' : 'Not running (see the message, try another port)'),
+              h('div', { class: 'd' }, 'Scan the QR code with your phone, or open this link. Phone and PC must use the same Wi-Fi.'),
+              h('div', { class: 'remote-url' }, r.url),
+              h('div', { class: 'inline' },
+                h('button', { onclick: () => copy(r.url) }, icon('copy'), 'Copy link'),
+                h('button', {
+                  onclick: async () => {
+                    try { cfg = await call('remote_new_token'); toast('New link made. The old link stops working.'); paint(); }
+                    catch (e) { toast(e, true); }
+                  },
+                }, 'New link'))),
+          ),
+          h('div', { class: 'd' }, 'Anyone with this link can play your sounds. Keep it private. If Windows asks about network access, allow Private networks.'));
+      } catch (e) {
+        box.replaceChildren(h('div', { class: 'd' }, `Cannot read the link: ${e}`));
+      }
+    };
+
+    const onoff = h('input', {
+      type: 'checkbox', checked: cfg.remote_on,
+      onchange: (e) => { cfg.remote_on = e.target.checked; box.hidden = !cfg.remote_on; commit(); paint(); },
+    });
+    const port = h('input', {
+      type: 'number', min: 1024, max: 65535, value: cfg.remote_port, class: 'port',
+      onchange: () => {
+        const v = Math.round(Number(port.value));
+        cfg.remote_port = v >= 1024 && v <= 65535 ? v : 8787;
+        port.value = cfg.remote_port;
+        commit(); paint();
+      },
+    });
+    paint();
+    return section('Phone remote',
+      row('Phone remote', 'Control the soundboard from your phone, like a Stream Deck.', onoff),
+      row('Port', 'Change it only if another app already uses 8787.', port),
+      box);
+  };
+
   const cable = devices.cable;
   const liveChoices = [AUTO_CABLE, ...devices.outputs.filter((n) => n !== 'Disabled' && n !== 'Default Output Device')];
 
@@ -981,6 +1089,10 @@ function buildSettings() {
       row('Mic volume', null, range('mic_volume'))),
 
     micGateSection(),
+
+    liveMixSection(),
+
+    remoteSection(),
 
     section('Sound shortcuts',
       shortcut('Pause all', ss.pause),
@@ -1106,6 +1218,8 @@ function wire() {
   for (const t of document.querySelectorAll('#tabs .rail-tab')) setIcon($('.ico', t), t.dataset.icon);
   setIcon($('#live-ico'), 'mic');
   setIcon($('#add-ico'), 'plus');
+  setIcon($('#folder-ico'), 'folder');
+  setIcon($('#sound-open'), 'folder');
   setIcon($('#sound-stop'), 'stop');
   setIcon($('#sound-pause'), 'pause');
   setIcon($('#play-ico'), 'play');
@@ -1119,6 +1233,9 @@ function wire() {
     if (e.key === 'Escape' && view !== 'home' && !dlg.open && !bindDlg.open) showView('home');
   });
   $('#go-live').addEventListener('click', toggleLive);
+
+  $('#sound-folder').addEventListener('click', importFolder);
+  $('#sound-open').addEventListener('click', () => call('open_soundboard_folder').catch((e) => toast(e, true)));
 
   $('#sound-add').addEventListener('click', () => {
     const p = preset();

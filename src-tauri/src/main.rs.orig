@@ -1,0 +1,240 @@
+// no console window on Windows release builds
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod audio;
+mod config;
+mod fx;
+mod hotkeys;
+mod images;
+mod links;
+mod logic;
+mod state;
+mod updater;
+
+use audio::{AudioCmd, AudioSettings, Devices, Levels, LevelsOut, LiveStatus, SoundLevelOut};
+use config::Config;
+use state::AppState;
+use std::path::Path;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::mpsc;
+use std::sync::Mutex;
+use std::time::Duration;
+use tauri::{Emitter, Manager, State};
+
+/// Names of sound files that do not exist (shown as an error in the UI).
+fn missing_files(files: &[String]) -> Option<String> {
+    let missing: Vec<&str> = files
+        .iter()
+        .filter(|f| !Path::new(f.as_str()).exists())
+        .map(|f| f.as_str())
+        .collect();
+    if missing.is_empty() {
+        None
+    } else {
+        Some(format!("Following files do not exist:\n{}", missing.join("\n")))
+    }
+}
+
+/// Re-check sound files for the whole config.
+fn refresh(cfg: &mut Config) {
+    for p in cfg.presets.iter_mut() {
+        for s in p.sounds.iter_mut() {
+            s.error = missing_files(&s.files);
+        }
+    }
+}
+
+#[tauri::command]
+fn get_state(state: State<'_, AppState>) -> Result<Config, String> {
+    let cfg = state.config.lock().map_err(|e| e.to_string())?;
+    Ok(cfg.clone())
+}
+
+/// UI sends the whole config after each edit. Returns it back with fresh errors.
+#[tauri::command]
+fn set_config(state: State<'_, AppState>, config: Config) -> Result<Config, String> {
+    let mut new = config;
+    new.normalize();
+    let mut cur = state.config.lock().map_err(|e| e.to_string())?;
+
+    for p in new.presets.iter_mut() {
+        for s in p.sounds.iter_mut() {
+            s.error = missing_files(&s.files);
+        }
+    }
+
+    state.send(AudioCmd::Configure(AudioSettings::from_config(&new)));
+    state.persist(&new);
+    *cur = new.clone();
+    Ok(new)
+}
+
+/// Switch preset from the UI.
+#[tauri::command]
+fn select_preset(state: State<'_, AppState>, index: usize) -> Result<Config, String> {
+    let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
+    if index >= cfg.presets.len() {
+        return Err("preset not found".into());
+    }
+    cfg.selected_preset = index;
+    state.persist(&cfg);
+    Ok(cfg.clone())
+}
+
+#[tauri::command]
+fn play_sound(state: State<'_, AppState>, preset: usize, sound: usize) -> Result<(), String> {
+    let cfg = state.config.lock().map_err(|e| e.to_string())?;
+    let s = cfg
+        .presets
+        .get(preset)
+        .and_then(|p| p.sounds.get(sound))
+        .ok_or("sound not found")?;
+    state.play(s);
+    Ok(())
+}
+
+#[tauri::command]
+fn audio_pause(state: State<'_, AppState>) {
+    state.send(AudioCmd::Pause);
+}
+
+#[tauri::command]
+fn audio_resume(state: State<'_, AppState>) {
+    state.send(AudioCmd::Resume);
+}
+
+#[tauri::command]
+fn audio_stop(state: State<'_, AppState>) {
+    state.send(AudioCmd::Stop);
+}
+
+/// `async` flag = runs on a worker thread, so waiting for the audio thread does not block the UI.
+#[tauri::command(async)]
+fn list_devices() -> Result<Devices, String> {
+    // Not through the audio thread: it can be busy opening streams, and then Settings
+    // waits behind it. cpal lists devices fine from any thread.
+    Ok(audio::list_devices())
+}
+
+/// Go Live on/off: sounds and your mic both go to the virtual cable (VB-CABLE), so Discord
+/// hears them together. Waits for the audio thread, so it runs on a worker thread.
+#[tauri::command(async)]
+fn set_live(state: State<'_, AppState>, on: bool) -> Result<LiveStatus, String> {
+    let (tx, rx) = mpsc::channel();
+    state.send(AudioCmd::Live(on, tx));
+    rx.recv_timeout(Duration::from_secs(8)).map_err(|e| e.to_string())?
+}
+
+/// Mic level meters (IN before the gate, OUT after gate + mic volume), loudest since the last call.
+/// The UI asks about 12 times a second, and only while the Settings meters are visible.
+#[tauri::command]
+fn get_levels(state: State<'_, AppState>) -> LevelsOut {
+    state.levels.take()
+}
+
+/// What the soundboard plays right now, as 5 frequency bands (bass .. treble) + the file of the
+/// sound that was started last. The UI asks about 30 times a second and moves the white bars
+/// on the tile of that sound.
+#[tauri::command]
+fn get_sound_level(state: State<'_, AppState>) -> SoundLevelOut {
+    state.levels.take_sound()
+}
+
+/// A sound picture as a data URL (png, jpg, webp, gif, bmp; 8 MB at most).
+#[tauri::command(async)]
+fn image_data(path: String) -> Result<String, String> {
+    images::data_url(&path)
+}
+
+/// Version of this build (the release workflow sets it from the git tag).
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Open one of our own links (new release, VB-CABLE site) in the default browser.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !links::allowed(&url) {
+        return Err("This link is not allowed.".into());
+    }
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("explorer");
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(&url).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Download the new setup from our GitHub Release, start it and quit.
+/// Progress: "update-progress" {done,total}. Failure: "update-error" (string).
+#[tauri::command]
+fn install_update(app: tauri::AppHandle, url: String, digest: Option<String>) -> Result<(), String> {
+    updater::run(app, url, digest)
+}
+
+/// After this, the next key release sends a "keys-bound" event with the held keys.
+#[tauri::command]
+fn begin_bind(state: State<'_, AppState>) {
+    state.binding.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn cancel_bind(state: State<'_, AppState>) {
+    state.binding.store(false, Ordering::SeqCst);
+}
+
+fn main() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&dir)?;
+            let path = dir.join("config.json");
+
+            let mut cfg = config::load(&path);
+            refresh(&mut cfg);
+
+            // audio thread reports errors to the UI as "audio-error" events
+            let handle = app.handle().clone();
+            let levels = Arc::new(Levels::default());
+            let tx = audio::spawn(Arc::clone(&levels), move |msg| {
+                let _ = handle.emit("audio-error", msg);
+            });
+            let _ = tx.send(AudioCmd::Configure(AudioSettings::from_config(&cfg)));
+
+            app.manage(AppState {
+                config: Mutex::new(cfg),
+                audio: Mutex::new(tx),
+                levels,
+                binding: std::sync::atomic::AtomicBool::new(false),
+                path,
+            });
+
+            hotkeys::spawn(app.handle().clone());
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_state,
+            set_config,
+            select_preset,
+            play_sound,
+            audio_pause,
+            audio_resume,
+            audio_stop,
+            list_devices,
+            set_live,
+            get_levels,
+            get_sound_level,
+            image_data,
+            app_version,
+            open_url,
+            install_update,
+            begin_bind,
+            cancel_bind
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Rustboard");
+}

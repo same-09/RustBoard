@@ -743,6 +743,12 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.15); backdrop-filter: blur(2px); 
 .fx-card.on { background: var(--btn-bg); color: var(--btn-text); box-shadow: none; }
 .fx-card.on .d { color: color-mix(in srgb, var(--btn-text) 70%, transparent); }
 .fx-grid.off { opacity: 0.5; }
+.remote-wrap { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.remote-qr { flex: none; width: 180px; height: 180px; border-radius: 10px; overflow: hidden; background: #fff; }
+.remote-qr svg { display: block; width: 100%; height: 100%; }
+.remote-txt { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 8px; }
+.remote-url { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; color: var(--text-secondary, inherit); user-select: text; }
+.port { width: 90px; }
 .fx-cell { display: flex; flex-direction: column; gap: 6px; }
 .fx-cell .fx-card { flex: 1; }
 .fx-key { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 0 2px; min-height: 26px; }

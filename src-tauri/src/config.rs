@@ -35,6 +35,20 @@ fn d_disabled() -> String {
 fn d_auto_cable() -> String {
     AUTO_CABLE.to_string()
 }
+fn d_remote_port() -> u16 {
+    8787
+}
+
+/// Secret in the phone-remote link. Random, 32 hex characters.
+pub fn new_token() -> String {
+    let mut b = [0u8; 16];
+    if getrandom::getrandom(&mut b).is_err() {
+        // should never happen; still better than an empty token
+        let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(1);
+        b = n.to_le_bytes();
+    }
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Shortcut {
@@ -125,6 +139,12 @@ pub struct Config {
     /// Gate threshold in dBFS (RMS), `GATE_MIN_DB..=GATE_MAX_DB`.
     #[serde(default = "d_gate_db")]
     pub gate_threshold_db: i32,
+    /// Ducking: sounds get quieter while you speak, so friends hear you over them. Off by default.
+    #[serde(default)]
+    pub duck_on: bool,
+    /// Limiter: stops loud peaks (sounds and mic) from clipping. On by default.
+    #[serde(default = "d_true")]
+    pub limiter_on: bool,
     /// Show the IN / OUT level meters in Settings.
     #[serde(default = "d_true")]
     pub meters_on: bool,
@@ -137,6 +157,14 @@ pub struct Config {
     /// Optional hotkey per mic effect: effect id -> keys. No entry = no hotkey.
     #[serde(default)]
     pub fx_keys: BTreeMap<String, Vec<String>>,
+    /// Phone remote: a small web page on the local network that plays sounds. Off by default.
+    #[serde(default)]
+    pub remote_on: bool,
+    #[serde(default = "d_remote_port")]
+    pub remote_port: u16,
+    /// Secret part of the link. Whoever has the link can use the remote.
+    #[serde(default)]
+    pub remote_token: String,
     #[serde(default)]
     pub overlap: bool,
     #[serde(default = "d_primary")]
@@ -166,11 +194,16 @@ impl Default for Config {
             secondary_device_volume: 100,
             mic_volume: 100,
             gate_on: false,
+            duck_on: false,
+            limiter_on: true,
             gate_threshold_db: d_gate_db(),
             meters_on: true,
             fx_on: false,
             fx_preset: d_fx_preset(),
             fx_keys: BTreeMap::new(),
+            remote_on: false,
+            remote_port: d_remote_port(),
+            remote_token: String::new(),
             overlap: false,
             primary_output: d_primary(),
             secondary_output: d_disabled(),
@@ -218,6 +251,12 @@ impl Config {
             self.fx_preset = d_fx_preset();
         }
         self.fx_keys.retain(|id, keys| crate::fx::is_known(id) && !keys.is_empty());
+        if self.remote_port < 1024 {
+            self.remote_port = d_remote_port();
+        }
+        if self.remote_token.len() < 16 {
+            self.remote_token = new_token();
+        }
     }
 }
 
@@ -262,6 +301,8 @@ mod tests {
         assert!(!c.gate_on);
         assert_eq!(c.gate_threshold_db, -50);
         assert!(c.meters_on);
+        assert!(!c.duck_on, "ducking is off until the user turns it on");
+        assert!(c.limiter_on, "the limiter is on by default");
     }
 
     #[test]
@@ -305,6 +346,20 @@ mod tests {
         c.normalize();
         assert_eq!(c.fx_keys.len(), 1);
         assert!(c.fx_keys.contains_key("robot"));
+    }
+
+    #[test]
+    fn remote_is_off_with_a_token_and_a_safe_port() {
+        let mut c: Config = serde_json::from_str("{}").unwrap();
+        assert!(!c.remote_on);
+        c.remote_port = 80;
+        c.normalize();
+        assert_eq!(c.remote_port, 8787);
+        assert_eq!(c.remote_token.len(), 32);
+        let t = c.remote_token.clone();
+        c.normalize();
+        assert_eq!(c.remote_token, t, "token must stay the same");
+        assert_ne!(new_token(), new_token());
     }
 
     #[test]
