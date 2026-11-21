@@ -1,170 +1,295 @@
-# Rustboard (Rust + HTML/CSS/JS + Python)
+<!-- markdownlint-disable MD033 MD041 -->
 
-Repo: https://github.com/same-09/RustBoard
+> [!NOTE]
+> Rustboard adalah proyek pribadi dan tidak berafiliasi dengan Discord maupun VB-Audio.
+> Satu-satunya sumber resmi adalah repo ini. Salinan di tempat lain tidak kami jamin.
 
-Port of the old C# / WPF Rustboard. Same idea: global keyboard shortcuts that
-play sounds, and "Go Live" sends them to Discord through a virtual cable.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/Rustboard-full-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/Rustboard-full-light.png">
+    <img src="assets/Rustboard-full-light.png" alt="Rustboard" width="460">
+  </picture>
+</p>
 
-| Part | Language | Where |
+<p align="center">
+  <b>Soundboard dengan hotkey global untuk Discord, ditulis dengan Rust.</b><br>
+  Satu file setup. Tanpa .NET, tanpa admin.
+</p>
+
+<p align="center">
+  <a href="https://github.com/same-09/RustBoard/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/same-09/RustBoard?label=release&color=ff3b3b&labelColor=18181b"></a>
+  <a href="https://github.com/same-09/RustBoard/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/same-09/RustBoard?style=flat&color=ff3b3b&labelColor=18181b"></a>
+  <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%2B-ff3b3b?labelColor=18181b">
+  <img alt="rust" src="https://img.shields.io/badge/made%20with-Rust-ff3b3b?labelColor=18181b">
+  <img alt="tauri" src="https://img.shields.io/badge/Tauri-2-ff3b3b?labelColor=18181b">
+  <img alt="android" src="https://img.shields.io/badge/remote-Android%20APK-ff3b3b?labelColor=18181b">
+</p>
+
+<p align="center">
+  <a href="https://github.com/same-09/RustBoard/releases/latest">
+    <img alt="Unduh Rustboard" src="https://img.shields.io/badge/%E2%86%93%20UNDUH%20RUSTBOARD-18181b?style=for-the-badge"><img alt="Rilis terbaru" src="https://img.shields.io/badge/RILIS%20TERBARU-ff3b3b?style=for-the-badge">
+  </a>
+</p>
+
+---
+
+> [!WARNING]
+> **Status: masih berkembang.** Sebagian kode Rust ditulis tanpa compiler di tangan, lalu diperbaiki lewat build
+> GitHub Actions. Error kecil mungkin muncul, dan laporannya sangat membantu.
+
+## Isi
+
+- [Fitur](#fitur)
+- [Pasang](#pasang)
+- [Go Live: suara dan mic ke Discord](#go-live-suara-dan-mic-ke-discord)
+- [Efek suara](#efek-suara)
+- [Noise gate dan meter](#noise-gate-dan-meter)
+- [Live mix](#live-mix)
+- [Remote HP dan aplikasi Android](#remote-hp-dan-aplikasi-android)
+- [Shortcut](#shortcut)
+- [Tampilan dan warna](#tampilan-dan-warna)
+- [Build dari source](#build-dari-source)
+- [Lokasi data](#lokasi-data)
+
+## Fitur
+
+**Soundboard**
+- Hotkey global: tombol bekerja walau jendela Rustboard tidak di depan, misalnya saat kamu main game.
+- Sound tersusun dalam **preset** (kumpulan sound). Ganti preset, daftar sound ikut ganti.
+- Tiap sound punya nama, satu atau banyak file (satu dipilih acak tiap diputar), volume, loop, **gambar**, dan **efek** sendiri.
+- Kotak sound berjajar ke kanan seperti rak album, dengan gambar di atas dan nama di bawah.
+- Sound disalin ke folder `Documents\RustBoard\Soundboard\`, jadi tetap jalan walau file asli dipindah atau dihapus. Ada **Import folder** untuk memasukkan banyak file sekaligus.
+- Format: mp3, wav, ogg, flac, m4a/aac, aiff.
+
+**Suara dan Discord**
+- **Go Live**: satu tombol mengirim sound dan mic ke Discord lewat kabel virtual (VB-CABLE).
+- Dua output: headphone dan Discord, jadi kamu ikut mendengar sound-nya.
+- Mic passthrough dengan noise gate dan meter level.
+- Live mix: ducking (sound mengecil saat kamu bicara) dan limiter (puncak keras tidak pecah).
+
+**Efek suara**
+- Pengubah suara untuk mic: 11 efek (Deep, Chipmunk, Demon, Giant, Robot, Alien, Radio, Megaphone, Cave, 8-bit).
+- Efek juga bisa dipasang per sound.
+
+**Remote**
+- Remote HP seperti Stream Deck lewat Wi-Fi, dan **aplikasi Android (APK)** mode landscape.
+
+**Aplikasi**
+- Setup sendiri dengan tampilan Rustboard, update dari dalam app, tema terang dan gelap mengikuti Windows.
+
+**Beda dengan Rustboard C# yang lama**
+
+| | Rustboard lama | Rustboard |
 |---|---|---|
-| Backend: global keys, audio, config | Rust ([Tauri 2](https://tauri.app)) | `src-tauri/src` |
-| UI | HTML, CSS, JS (no framework, no build step) | `ui/` |
-| Tools: config converter, mock backend for UI work | Python 3 (stdlib only) | `tools/` |
+| Bahasa | C# (WPF) | Rust ([Tauri 2](https://tauri.app)) |
+| Antarmuka | WPF | HTML, CSS, JS (tanpa framework, tanpa build step) |
+| Efek suara mic dan per sound | tidak ada | ada |
+| Gambar per sound | tidak ada | ada |
+| Remote HP dan APK Android | tidak ada | ada |
+| Noise gate, meter, ducking, limiter | tidak ada | ada |
+| Update dari dalam app | tidak ada | ada (SHA-256 dicek) |
+| Minimize ke tray, ukuran jendela diingat, jendela About | ada | belum |
 
-## Run
+## Pasang
 
-Needs Rust and the [Tauri prerequisites](https://tauri.app/start/prerequisites/).
+1. Unduh `Rustboard_x.y.z_x64-setup.exe` dari [Releases](https://github.com/same-09/RustBoard/releases/latest).
+2. Klik dua kali. Setup membuat shortcut di Start menu dan desktop. Autostart bisa dipilih.
+3. Buka Rustboard, tambah sound, atur hotkey.
+
+Windows 10 atau lebih baru. Per user saja, tidak ada prompt admin. Pemasangan masuk ke `%LOCALAPPDATA%\Rustboard` (atau folder pilihanmu) dan muncul di Apps & features.
+
+**Hapus Rustboard:** Pengaturan Windows > Apps > Rustboard > Uninstall, atau jalankan `uninstall.exe` di folder pemasangan.
+
+**Pindah dari Rustboard lama:**
+
+```
+python tools/convert_config.py
+```
+
+Membaca `C:\ProgramData\Rustboard\config.xml` lalu menulis `config.json` yang baru. Tombol tanpa padanan (tombol mouse, F13+, tombol media) dilewati dengan peringatan.
+
+## Go Live: suara dan mic ke Discord
+
+1. Pasang [VB-CABLE](https://vb-audio.com/Cable/) (gratis), lalu restart Windows.
+2. Di Rustboard tekan **Go Live** (bar atas). Sound dan mic kamu masuk ke `CABLE Input`. Headphone kamu tetap memutar sound seperti biasa.
+3. Di Discord: Settings > Voice & Video > Input Device = `CABLE Output`, Noise Suppression dimatikan.
+4. Tekan Go Live lagi untuk berhenti. Pengaturan output dan mic manualmu kembali seperti semula.
+
+Settings > **Discord** menunjukkan apakah kabel ketemu dan membiarkan kamu memilih perangkat lain untuk Go Live (bawaan: `Auto`, yang mendahulukan VB-CABLE lalu kabel virtual lain).
+
+## Efek suara
+
+Tab **Sound Effects** (kolom kiri) mengubah suara mic secara langsung. Efek berjalan setelah noise gate dan sebelum volume mic, jadi cocok dengan Go Live dan dengan pasangan Mic input + Mic output.
+
+| Efek | Suara |
+|---|---|
+| Deep | Suara lebih rendah dan besar |
+| Chipmunk | Cepat dan cempreng |
+| Demon | Sangat rendah, kasar, gelap |
+| Giant | Suara raksasa di aula besar |
+| Robot | Robot logam |
+| Alien | Alien sci-fi yang bergetar |
+| Radio | Walkie-talkie, radio tua |
+| Megaphone | Megafon keras dan sengau |
+| Cave | Gema gua |
+| 8-bit | Renyah seperti konsol retro |
+
+- Pilih satu kartu efek untuk menyalakannya. Matikan lewat saklar **Sound effects** di atas, atau pilih **Clean**. Tiap kartu punya baris hotkey sendiri.
+- Efek pitch menambah jeda sekitar 20 sampai 30 ms.
+- **Efek per sound:** edit sebuah sound > **Sound effect**. Gema dan reverb tetap bunyi sebentar setelah file selesai. Efek sound tidak bergantung pada efek mic.
+- Algoritma efek diport dari proyek Voicefork ke Rust (`src-tauri/src/fx.rs`) dan punya tes sendiri.
+
+## Noise gate dan meter
+
+Settings > **Noise gate & meters** (dua saklar terpisah):
+
+- **Noise gate** (mati bawaan): membisukan mic di sela kata, supaya suara keyboard dan kipas tidak masuk Discord. Slider **threshold** (-70 sampai -20 dB, bawaan -50) adalah level yang harus dilewati suaramu agar gate terbuka. Gate terbuka dalam 5 ms, tetap terbuka 200 ms setelah kamu berhenti (ujung kata tidak terpotong), lalu menutup halus dalam 80 ms.
+- **Level meters** (nyala bawaan): **IN** adalah mic sebelum gate, **OUT** adalah yang keluar ke kabel atau output mic (setelah gate dan volume mic). Garis merah di IN menandai threshold. Atur gate sambil melihat IN: taruh threshold di antara suara ruangan dan suaramu. Meter hanya jalan saat Settings terbuka.
+- Keduanya butuh mic yang menyala: Mic input dan Mic output di Settings, atau **Go Live**.
+
+## Live mix
+
+Settings > **Live mix**:
+
+- **Ducking:** sound mengecil saat kamu bicara, jadi temanmu mendengar suaramu. Jalan di output yang membawa mic (Go Live). Butuh mic menyala. Mati bawaan.
+- **Limiter:** mencegah puncak keras pecah di Discord. Berlaku untuk sound dan mic. Nyala bawaan.
+
+## Remote HP dan aplikasi Android
+
+Settings > **Phone remote** (mati bawaan) menjalankan server kecil di Wi-Fi kamu. Dari HP, ketuk sound untuk memutarnya, pilih efek mic, ganti preset, atur volume, dan Pause, Continue, atau Stop semua.
+
+1. PC: Rustboard > Settings > Phone remote > nyalakan > **Copy link** (atau scan QR code dengan HP).
+2. HP dan PC harus memakai Wi-Fi yang sama. Kalau Windows bertanya soal jaringan, izinkan **Private networks**.
+3. Port bawaan `8787`. Ganti kalau dipakai aplikasi lain.
+
+Link berisi token rahasia, jadi siapa pun yang punya link bisa memakai remote. **New link** membuat token baru dan link lama berhenti bekerja. Server memakai HTTP biasa, hanya untuk jaringan lokal: jangan buka port di router.
+
+<details>
+<summary><b>Aplikasi Android (APK)</b></summary>
+
+Folder `android/` berisi aplikasi Android kecil: remote HP sebagai aplikasi sungguhan, bukan tab browser.
+
+- Hanya mode landscape, layar tetap menyala.
+- Tampilan menyesuaikan ukuran layar sendiri. Tombol **A−** dan **A+** di kiri menyetel lebih halus, dan pilihannya tersimpan.
+- HP bergetar saat tombol ditekan.
+
+Cara pakai:
+
+1. PC: Settings > Phone remote > nyalakan > **Copy link**.
+2. Kirim link ke HP (chat atau email), salin di HP, buka aplikasi, tekan **Paste**, lalu **Connect**. Link diingat. Tombol **PC** kembali ke layar ini.
+
+APK dibangun oleh GitHub (`.github/workflows/android.yml`). Tag seperti `v0.1.7` menambahkan `Rustboard-Remote_0.1.7.apk` ke Release yang sama dengan setup Windows. Di HP: buka APK dan izinkan "install unknown apps" untuk aplikasi file atau browsermu. Build ditandatangani dengan `android/rustboard-remote.keystore`, kunci publik di repo ini supaya tiap build bisa menimpa versi sebelumnya. Cukup untuk alat pribadi, tidak untuk Play Store.
+
+Halaman aplikasi bisa dibuka di browser PC tanpa HP: `android/app/src/main/assets/index.html`.
+
+</details>
+
+## Shortcut
+
+Atur di Settings dan di dialog tiap sound. Tekan kombinasi tombol yang kamu mau. Begitu tombol dilepas, semua tombol yang tadi ditahan menjadi kombinasinya.
+
+- **Sound:** tiap sound punya kombinasi sendiri, hanya aktif untuk preset yang sedang dipilih.
+- **Preset:** tiap preset punya tombol ganti. Menggandakan preset mengosongkan tombolnya (dua preset di satu tombol saling berebut).
+- **Efek mic:** tekan satu kali menyalakan efek, tekan efek yang sama lagi mematikan semua efek.
+- **Pause all, Continue, Stop all:** tiga tombol kontrol untuk semua sound.
+
+Nama tombol memakai nama `rdev` (`KeyA`, `Kp1`, `F5`, dan seterusnya), bukan VKey Windows. Di Linux hook tombol butuh X11 (tanpa Wayland). Di macOS izinkan Accessibility.
+
+## Tampilan dan warna
+
+Antarmuka Rustboard hitam dan putih yang bersih dengan satu aksen merah. Aksen merah dipakai untuk hal yang sedang "hidup" (Go Live, garis threshold, peringatan). Tema mengikuti Windows: terang atau gelap.
+
+| | Terang | Gelap |
+|---|---|---|
+| Latar | ![](https://img.shields.io/badge/-%23f5f5f7-f5f5f7) `#f5f5f7` | ![](https://img.shields.io/badge/-%230a0a0a-0a0a0a) `#0a0a0a` |
+| Panel | ![](https://img.shields.io/badge/-%23dedee3-dedee3) `#dedee3` | ![](https://img.shields.io/badge/-%231a1a1a-1a1a1a) `#1a1a1a` |
+| Teks | ![](https://img.shields.io/badge/-%2318181b-18181b) `#18181b` | ![](https://img.shields.io/badge/-%23ffffff-ffffff) `#ffffff` |
+| Tombol utama | ![](https://img.shields.io/badge/-%2318181b-18181b) `#18181b` | ![](https://img.shields.io/badge/-%23d9d9dd-d9d9dd) `#d9d9dd` |
+| Aksen | ![](https://img.shields.io/badge/-%23ff3b3b-ff3b3b) `#ff3b3b` | ![](https://img.shields.io/badge/-%23ff4d4d-ff4d4d) `#ff4d4d` |
+| OK | ![](https://img.shields.io/badge/-%2316a34a-16a34a) `#16a34a` | ![](https://img.shields.io/badge/-%234ade80-4ade80) `#4ade80` |
+
+Sudut membulat: 8 px (kontrol), 12 px (item), 20 px (panel). Font: SF Pro, Segoe UI Variable, lalu Inter dan font sistem. Kotak sound tanpa gambar mendapat cover warna otomatis dari namanya, dengan ikon bar suara putih di tengah. Ikon dan logo ada di `assets/`.
+
+## Build dari source
+
+Butuh Rust dan [prasyarat Tauri](https://tauri.app/start/prerequisites/).
 
 ```
 cargo install tauri-cli --version "^2"
 cd src-tauri
-cargo tauri dev        # run
+cargo tauri dev        # jalankan
 cargo tauri build      # installer
 ```
 
-> The Rust code was written without a compiler at hand. Expect to fix a typo
-> or two on the first `cargo check`. The UI and the Python tools were tested.
-
-## Release (no key, no secrets)
+**Rilis** (tanpa kunci, tanpa secret):
 
 ```
 git tag v0.0.1
 git push origin v0.0.1
 ```
 
-The workflow (`.github/workflows/build.yml`) builds `Rustboard_x.y.z_x64-setup.exe` (double-click: installer with
-Start menu + desktop shortcut) and attaches it to a GitHub Release. Pushes to `main` only test the build.
+Workflow `.github/workflows/build.yml` membangun `Rustboard_x.y.z_x64-setup.exe` dan melampirkannya ke GitHub Release. Push ke `main` hanya menguji build. Tag yang sama juga membangun APK Android.
 
-**Updates:** on start the app asks GitHub for the newest Release; if it is newer than the running version, a bar says
-"New version ... is available" with an **Update** button. The app downloads the setup from our own Release (checks
-SHA-256 when GitHub gives one), starts it and quits. Nothing needs signing, so no `TAURI_SIGNING_PRIVATE_KEY` secret.
-Without a signature, trust comes only from HTTPS + our GitHub repo.
+**Update dalam app:** saat mulai, app bertanya ke GitHub soal Release terbaru. Kalau lebih baru, sebuah bar menulis "New version ... is available" dengan tombol **Update**. App mengunduh setup dari Release kita sendiri (SHA-256 dicek kalau GitHub memberikannya), menjalankannya, lalu keluar. Tidak ada tanda tangan, jadi kepercayaan hanya dari HTTPS dan repo GitHub kita.
 
-## Move your old settings
-
-```
-python tools/convert_config.py
-```
-
-Reads `C:\ProgramData\Rustboard\config.xml`, writes the new `config.json`
-into the app data folder. Keys with no match (mouse buttons, F13+, media keys)
-are skipped with a warning.
-
-## Work on the UI without Rust
-
-```
-python tools/dev_server.py
-# open http://127.0.0.1:8765
-```
-
-Mock backend: no sound, no global hotkeys (keys are read from the page).
-
-## Layout
-
-```
-src-tauri/src/
-  main.rs      Tauri commands + setup
-  config.rs    config model, load/save (config.json)
-  audio.rs     audio thread: 2 outputs, mixer, mic passthrough (+ resampler, noise gate, level meters), Go Live, VB-Cable detection
-  images.rs    sound pictures: file -> data URL for the UI
-  fx.rs        mic sound effects (voice changer): pitch, echo, reverb, robot... (port of Voicefork)
-  hotkeys.rs   global key hook (rdev)
-  logic.rs     shortcut matching, preset switch
-  state.rs     shared app state
-ui/            index.html, style.css, js/{main,api,keys}.js
-tools/         convert_config.py, dev_server.py
-```
-
-## Tabs
-
-The left bar has three tabs: **Settings**, **Soundboard** and **Sound Effects**.
-Sound Effects is a voice changer for the mic passthrough (11 effects: Clean, Deep, Chipmunk, Demon, Giant,
-Robot, Alien, Radio, Megaphone, Cave, 8-bit). It runs after the noise gate and before the mic volume, so it
-works with Go Live and with a Mic input + Mic output pair. Config keys: `fx_on`, `fx_preset`.
-Pitch effects add about 20-30 ms of delay.
-
-Each sound in the Soundboard can also have its own effect (edit a sound > **Sound effect**, config key `fx` on the
-sound). Echo and reverb effects ring out a little after the file ends. A sound's effect does not depend on the mic effect.
-
-The Soundboard shows sounds as tiles that run to the right and wrap to the next row. Each sound can have a
-picture (edit a sound > **Picture**; png, jpg, webp, gif, bmp, up to 8 MB; config key `image`). Without a picture
-the tile gets a generated cover.
-
-## Differences from the C# app
-
-- **Not ported:** minimize to tray, window size memory, About window.
-- **Audio formats:** mp3, wav, ogg, flac, m4a/aac, aiff. **wma is not supported.**
-- **Mic passthrough:** needs devices with 32-bit float audio. Mic and output may run at different sample rates
-  (simple linear resampler, 40 ms jitter buffer).
-- **Key names** are `rdev` names (`KeyA`, `Kp1`, `F5`...), not Windows VKeys.
-- **Linux:** the key hook needs X11 (no Wayland). **macOS:** allow Accessibility.
-- Cloning a preset clears its switch keys (two presets on one key fight).
-
-Config: `<app data>/com.rustboard.app/config.json`
-(Windows `%APPDATA%`, Linux `~/.local/share`, macOS `~/Library/Application Support`).
-
-## Noise gate and level meters
-
-Settings > *Noise gate & meters* (two separate switches):
-
-- **Noise gate** (off by default): mutes your mic between words, so keys and fans do not reach Discord.
-  The **threshold** slider (-70 to -20 dB, default -50) is the level your voice must pass to open it.
-  It opens in 5 ms, stays open 200 ms after you stop (no chopped word endings) and fades out in 80 ms.
-- **Level meters** (on by default): **IN** is the mic before the gate, **OUT** is what goes to the cable or
-  mic output (after gate and Mic volume). A red line on IN marks the threshold. Set the gate by watching IN:
-  put the threshold between your room noise and your voice. The meters only run while Settings is open.
-- Both need the mic running: a Mic input and Mic output in Settings, or **Go Live**.
-
-## Go Live: sounds + your voice in Discord (VB-CABLE)
-
-1. Install [VB-CABLE](https://vb-audio.com/Cable/) (free), restart Windows.
-2. Rustboard: press **Go Live** (top bar). Sounds (Secondary output) and your mic (Settings > Microphone input, or the
-   default mic) both go to `CABLE Input`. Your headphones (Primary output) keep playing the sounds as before.
-3. Discord: Settings > Voice & Video > Input Device = `CABLE Output`, Noise Suppression off.
-4. Press Go Live again to stop; your manual output/mic settings come back untouched.
-
-Settings > *Discord (VB-Cable)* shows whether a cable was found and lets you pick another device for Go Live
-(default: `Auto`, which prefers VB-CABLE, then other virtual cables). While live, sounds are 3 dB lower so
-sounds + mic do not clip on the cable.
-
-## Installer look (custom setup + uninstaller)
-
-The setup `.exe` is **not** NSIS any more. It is our own small Tauri app in `setup/` that shows
-`installer-ui/` (setup) and `uninstaller-ui/` (uninstall) in the Rustboard style.
-
-- It embeds `rustboard.exe`, writes it to `%LOCALAPPDATA%\Rustboard` (or the folder you pick), makes the
-  Start menu / desktop shortcuts, the optional autostart, and the "Apps & features" entry.
-- It copies itself to `<install folder>\uninstall.exe`. That exe, run with `--uninstall`, shows the uninstall UI.
-- The in-app updater still starts it with `/P /R`: no window, install over the current copy, start Rustboard again.
-- Per-user only. No admin prompt.
-
-Build it on Windows (also what the workflow does):
+**Setup sendiri.** File setup bukan NSIS. Itu aplikasi Tauri kecil di `setup/` yang menampilkan `installer-ui/` (pasang) dan `uninstaller-ui/` (hapus) dengan gaya Rustboard. Ia menyalin diri ke `<folder pemasangan>\uninstall.exe`. Update dalam app memanggilnya dengan `/P /R` (tanpa jendela, pasang di atas versi lama, lalu buka Rustboard lagi).
 
 ```
 cargo install tauri-cli --version "^2" --locked
-pwsh tools/build_setup.ps1        # -> dist-setup/Rustboard_<version>_x64-setup.exe
+pwsh tools/build_setup.ps1        # -> dist-setup/Rustboard_<versi>_x64-setup.exe
 ```
 
-`cargo tauri build` inside `src-tauri` still makes the old NSIS setup (`tauri.conf.json` > `bundle.windows.nsis`),
-but releases no longer use it.
+**Kerja di UI tanpa Rust:**
 
+```
+python tools/dev_server.py
+# buka http://127.0.0.1:8765
+```
 
-## Android remote app (APK)
+Backend palsu: tanpa suara dan tanpa hotkey global (tombol dibaca dari halaman).
 
-`android/` is a small Android app: the phone remote as a real app, not a browser tab. It is landscape only,
-keeps the screen on, and talks to Rustboard on your PC over Wi-Fi (the **Phone remote** server, Settings).
+<details>
+<summary><b>Peta kode</b></summary>
 
-1. PC: Rustboard > Settings > Phone remote > turn on > **Copy link**.
-2. Send the link to the phone (chat, email), copy it there, open the app, press **Paste**, then **Connect**.
-   The app remembers the link. **Change PC** goes back to this screen.
-3. Phone and PC must use the same Wi-Fi. If Windows asks about network access, allow *Private networks*.
+```
+src-tauri/src/
+  main.rs      perintah Tauri dan setup
+  config.rs    model config, baca/simpan (config.json)
+  audio.rs     thread audio: 2 output, mixer, mic passthrough (resampler, noise gate, meter), Go Live, deteksi VB-CABLE
+  fx.rs        efek suara (pengubah suara): pitch, echo, reverb, robot, ...
+  images.rs    gambar sound: file -> data URL untuk UI
+  library.rs   folder Soundboard dan Import folder
+  remote.rs    server remote HP (+ remote.html), QR code
+  hotkeys.rs   hook tombol global (rdev)
+  logic.rs     pencocokan shortcut, ganti preset
+  state.rs     state app bersama
+  updater.rs   cek Release GitHub, unduh setup, SHA-256
+  links.rs     link web yang boleh dibuka dari UI
+ui/            index.html, style.css, js/{main,api,keys}.js
+setup/         setup sendiri (Tauri), UI di installer-ui/ dan uninstaller-ui/
+android/       aplikasi remote Android (WebView + halaman di assets/)
+tools/         convert_config.py, dev_server.py, build_setup.ps1
+```
 
-The APK is built by GitHub (`.github/workflows/android.yml`): a tag like `v0.1.7` adds
-`Rustboard-Remote_0.1.7.apk` to the same Release as the Windows setup. On the phone: open the APK and allow
-"install unknown apps" for your browser or file app. The build is signed with `android/rustboard-remote.keystore`
-(a public key in this repo, so every build can update the one before). Fine for a private tool, not for the Play Store.
+</details>
 
-The page scales itself to the phone screen (small phone = smaller page). **A−** / **A+** on the left fine tune it; the choice is saved.
+## Lokasi data
 
-Run the page on a PC without a phone: open `android/app/src/main/assets/index.html` in a browser. The app code
-itself is `MainActivity.java` (a full-screen WebView, vibrate, paste, back button).
+| Apa | Di mana |
+|---|---|
+| Config | `<app data>/com.rustboard.app/config.json` |
+| Salinan sound | `Documents\RustBoard\Soundboard\` |
+| Pemasangan | `%LOCALAPPDATA%\Rustboard` |
+
+`<app data>` adalah `%APPDATA%` di Windows, `~/.local/share` di Linux, dan `~/Library/Application Support` di macOS.
+
+## Belum ada
+
+Minimize ke tray, ingatan ukuran jendela, jendela About, dan format wma.
+
+Mic passthrough butuh perangkat audio 32-bit float. Mic dan output boleh punya sample rate berbeda (resampler linear sederhana dengan buffer jitter 40 ms).
+
+## Terima kasih
+
+Rustboard adalah port dari aplikasi Rustboard C# / WPF yang lama ke Rust. Algoritma efek suara datang dari proyek Voicefork. [VB-CABLE](https://vb-audio.com/Cable/) dari VB-Audio dipakai untuk mengirim suara ke Discord.
