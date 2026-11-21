@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.VibrationEffect;
@@ -14,6 +15,11 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
+
+import org.json.JSONObject;
 
 /**
  * Rustboard Remote: a full-screen WebView that shows the remote (assets/index.html).
@@ -73,10 +79,33 @@ public class MainActivity extends Activity {
             return t == null ? "" : t.toString();
         }
 
+        /** Open our own scanner screen (ZXing). The result comes back in onActivityResult. */
+        @JavascriptInterface
+        public void scanQr() {
+            runOnUiThread(() -> new IntentIntegrator(MainActivity.this)
+                    .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+                    .setPrompt("Point the camera at the QR code in Rustboard on your PC")
+                    .setBeepEnabled(false)
+                    .initiateScan());
+        }
+
         @JavascriptInterface
         public void quit() {
             runOnUiThread(MainActivity.this::finish);
         }
+    }
+
+    /** The scanner screen is closed: give the text of the QR code to the page (empty = cancelled). */
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        IntentResult r = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
+        if (r == null) {
+            super.onActivityResult(requestCode, resultCode, data);
+            return;
+        }
+        String text = r.getContents() == null ? "" : r.getContents();
+        web.evaluateJavascript("window.onQr && window.onQr(" + JSONObject.quote(text) + ")", null);
     }
 
     @Override

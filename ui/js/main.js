@@ -1003,7 +1003,7 @@ function buildSettings() {
       row('Limiter', 'Stops loud peaks from crackling in Discord. Applies to sounds and to your mic.', limiterSwitch));
   };
 
-  // Phone remote: a web page on your Wi-Fi, like a Stream Deck. Off by default.
+  // Phone remote: the Rustboard Remote Android app talks to this PC over Wi-Fi. Off by default.
   const remoteSection = () => {
     const box = h('div', { class: 'set-row col remote-box' });
     box.hidden = !cfg.remote_on;
@@ -1020,7 +1020,7 @@ function buildSettings() {
             qr,
             h('div', { class: 'remote-txt' },
               h('div', { class: r.running ? 'ok' : 'warn' }, r.running ? 'Running' : 'Not running (see the message, try another port)'),
-              h('div', { class: 'd' }, 'Scan the QR code with your phone, or open this link. Phone and PC must use the same Wi-Fi.'),
+              h('div', { class: 'd' }, 'Open the Rustboard Remote app on your phone and press Scan QR. Or copy the link and paste it in the app. Phone and PC must use the same Wi-Fi.'),
               h('div', { class: 'remote-url' }, r.url),
               h('div', { class: 'inline' },
                 h('button', { onclick: () => copy(r.url) }, icon('copy'), 'Copy link'),
@@ -1052,7 +1052,7 @@ function buildSettings() {
     });
     paint();
     return section('Phone remote',
-      row('Phone remote', 'Control the soundboard from your phone, like a Stream Deck.', onoff),
+      row('Phone remote', 'Control the soundboard from the Rustboard Remote Android app, like a Stream Deck.', onoff),
       row('Port', 'Change it only if another app already uses 8787.', port),
       box);
   };
@@ -1344,10 +1344,14 @@ function aiVoiceSection() {
   const resRow = h('div', { class: 'set-row' }, h('div', { class: 'stack' }, testResult), clipBtns);
   resRow.hidden = true;
   const testBtn = h('button', { class: 'primary', onclick: () => runTest() }, 'Test voice');
+  // "Cancel" shows only while the test runs (listening or changing the voice)
+  const cancelBtn = h('button', { onclick: () => cancelTest() }, 'Cancel');
+  cancelBtn.hidden = true;
   const haveVoice = () => voices.some((v) => v.id === cfg.ai_voice);
 
   const paintTest = () => {
     testBtn.disabled = testing || !haveVoice() || live;
+    cancelBtn.hidden = !testing;
     testHint.textContent = testing ? testStep
       : live ? 'Stop Go Live first. The test plays on your Primary output and would reach Discord.'
         : !haveVoice() ? 'Pick a voice with Use first.'
@@ -1372,6 +1376,14 @@ function aiVoiceSection() {
     resRow.hidden = false;
   };
 
+  const cancelTest = async () => {
+    if (!testing) return;
+    cancelBtn.disabled = true;
+    testStep = 'Cancelling…';
+    paintTest();
+    try { await call('ai_test_cancel'); } catch (_) { /* the test ends by itself */ }
+  };
+
   const runTest = async () => {
     if (testing) return;
     testing = true;
@@ -1394,13 +1406,18 @@ function aiVoiceSection() {
     try {
       showTest(await call('ai_test', { voice: cfg.ai_voice }));
     } catch (e) {
-      clipBtns.replaceChildren();
-      testResult.textContent = String(e);
-      testResult.classList.add('warn');
-      resRow.hidden = false;
+      if (/cancel/i.test(String(e))) {
+        toast('Test cancelled.'); // nothing to show: the clips are not kept
+      } else {
+        clipBtns.replaceChildren();
+        testResult.textContent = String(e);
+        testResult.classList.add('warn');
+        resRow.hidden = false;
+      }
     } finally {
       clearInterval(timer);
       testing = false;
+      cancelBtn.disabled = false;
       testBtn.textContent = 'Test voice';
       paintTest();
     }
@@ -1444,7 +1461,7 @@ function aiVoiceSection() {
       list,
       h('div', { class: 'set-row' },
         h('div', { class: 'txt' }, h('div', { class: 't' }, 'Test voice'), testHint),
-        h('div', { class: 'ctl' }, testBtn)),
+        h('div', { class: 'ctl' }, cancelBtn, testBtn)),
       resRow,
       h('div', { class: 'set-row' },
         h('div', { class: 'txt' }, h('div', { class: 'd' }, 'Download a voice from voice-models.com, then import the .zip here.')),

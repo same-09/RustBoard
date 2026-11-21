@@ -184,13 +184,13 @@ Settings > **Live mix**:
 
 ## Remote HP dan aplikasi Android
 
-Settings > **Phone remote** (mati bawaan) menjalankan server kecil di Wi-Fi kamu. Dari HP, ketuk sound untuk memutarnya, pilih efek mic, ganti preset, atur volume, dan Pause, Continue, atau Stop semua.
+Settings > **Phone remote** (mati bawaan) menjalankan server kecil di Wi-Fi kamu. Remote dipakai lewat **aplikasi Android Rustboard Remote** (APK di bawah), bukan lewat web. Dari HP, ketuk sound untuk memutarnya, pilih efek mic, ganti preset, atur volume, dan Pause, Continue, atau Stop semua.
 
-1. PC: Rustboard > Settings > Phone remote > nyalakan > **Copy link** (atau scan QR code dengan HP).
+1. PC: Rustboard > Settings > Phone remote > nyalakan. QR code muncul di sana.
 2. HP dan PC harus memakai Wi-Fi yang sama. Kalau Windows bertanya soal jaringan, izinkan **Private networks**.
 3. Port bawaan `8787`. Ganti kalau dipakai aplikasi lain.
 
-Link berisi token rahasia, jadi siapa pun yang punya link bisa memakai remote. **New link** membuat token baru dan link lama berhenti bekerja. Server memakai HTTP biasa, hanya untuk jaringan lokal: jangan buka port di router.
+Link ini hanya untuk aplikasi Android. Kalau dibuka di browser, yang muncul cuma pesan singkat, tidak ada halaman kontrol lagi. Link berisi token rahasia, jadi siapa pun yang punya link bisa memakai remote. **New link** membuat token baru dan link lama berhenti bekerja. Server memakai HTTP biasa, hanya untuk jaringan lokal: jangan buka port di router.
 
 <details>
 <summary><b>Aplikasi Android (APK)</b></summary>
@@ -203,8 +203,13 @@ Folder `android/` berisi aplikasi Android kecil: remote HP sebagai aplikasi sung
 
 Cara pakai:
 
-1. PC: Settings > Phone remote > nyalakan > **Copy link**.
-2. Kirim link ke HP (chat atau email), salin di HP, buka aplikasi, tekan **Paste**, lalu **Connect**. Link diingat. Tombol **PC** kembali ke layar ini.
+1. PC: Settings > Phone remote > nyalakan. QR code muncul di sana.
+2. HP: buka aplikasi, tekan **Scan QR**, arahkan kamera ke QR code di PC. Langsung tersambung. Izinkan kamera saat diminta.
+3. Tanpa kamera? Tekan **Copy link** di PC, kirim ke HP (chat atau email), salin, buka aplikasi, tekan **Paste**, lalu **Connect**.
+
+Link diingat. Tombol **PC** kembali ke layar sambung.
+
+Pemindai QR buatan aplikasi sendiri (library ZXing yang open source, jalan di dalam APK). Tidak memakai Google Code Scanner, Google Play services, atau Google Lens, dan jalan tanpa internet.
 
 APK dibangun oleh GitHub (`.github/workflows/android.yml`). Tag seperti `v0.1.7` menambahkan `Rustboard-Remote_0.1.7.apk` ke Release yang sama dengan setup Windows. Di HP: buka APK dan izinkan "install unknown apps" untuk aplikasi file atau browsermu. Build ditandatangani dengan `android/rustboard-remote.keystore`, kunci publik di repo ini supaya tiap build bisa menimpa versi sebelumnya. Cukup untuk alat pribadi, tidak untuk Play Store.
 
@@ -280,7 +285,7 @@ src-tauri/src/
   fx.rs        efek suara (pengubah suara): pitch, echo, reverb, robot, ...
   images.rs    gambar sound: file -> data URL untuk UI
   library.rs   folder Soundboard dan Import folder
-  remote.rs    server remote HP (+ remote.html), QR code
+  remote.rs    server remote HP (untuk aplikasi Android), QR code
   hotkeys.rs   hook tombol global (rdev)
   logic.rs     pencocokan shortcut, ganti preset
   state.rs     state app bersama

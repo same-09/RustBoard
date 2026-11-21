@@ -13,6 +13,7 @@ use rodio::cpal::{self, SampleFormat};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,14 @@ const ORIGINAL: &str = "my-voice.wav";
 const CONVERTED: &str = "new-voice.wav";
 /// Below this peak (about -50 dB) we call the mic silent.
 const SILENT_PEAK: f32 = 0.003;
+
+/// The "Cancel" button sets this. `run` clears it when a new test starts.
+static CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// Stop the test that is running (recording or converting). Does nothing when none runs.
+pub fn cancel() {
+    CANCEL.store(true, Ordering::Relaxed);
+}
 
 #[derive(Serialize)]
 pub struct TestOut {
@@ -172,6 +181,9 @@ pub fn record(input_name: &str, seconds: u32) -> Result<(Vec<f32>, u32), String>
     stream.play().map_err(|e| format!("Cannot start the mic: {e}"))?;
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(seconds as u64) {
+        if CANCEL.load(Ordering::Relaxed) {
+            return Err(crate::voice_ai::CANCELLED.to_string()); // `stream` is dropped here: the mic closes
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
     drop(stream);
@@ -187,6 +199,7 @@ pub fn record(input_name: &str, seconds: u32) -> Result<(Vec<f32>, u32), String>
 /// The whole test: record, save, convert, time it, save the result.
 /// Takes `SECONDS` plus the conversion time: call it from a worker thread.
 pub fn run(engine: &crate::voice_ai::Engine, voice_dir: &Path, input_name: &str) -> Result<TestOut, String> {
+    CANCEL.store(false, Ordering::Relaxed);
     let out_dir = dir();
     fs::create_dir_all(&out_dir).map_err(|e| format!("Cannot make the temp folder: {e}"))?;
     let _ = fs::remove_file(out_dir.join(ORIGINAL));
@@ -202,7 +215,7 @@ pub fn run(engine: &crate::voice_ai::Engine, voice_dir: &Path, input_name: &str)
     let recorded_secs = samples.len() as f32 / rate as f32;
 
     let t0 = Instant::now();
-    let result = crate::voice_ai::convert(engine, voice_dir, &samples, rate);
+    let result = crate::voice_ai::convert(engine, voice_dir, &samples, rate, &CANCEL);
     let convert_secs = t0.elapsed().as_secs_f32();
 
     let mut out = TestOut {
@@ -222,6 +235,7 @@ pub fn run(engine: &crate::voice_ai::Engine, voice_dir: &Path, input_name: &str)
             out.speed = convert_secs / recorded_secs.max(0.01);
             out.verdict = verdict(out.speed);
         }
+        Err(e) if e == crate::voice_ai::CANCELLED => return Err(e),
         Err(e) => out.error = Some(e),
     }
     Ok(out)

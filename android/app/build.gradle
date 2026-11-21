@@ -38,3 +38,9 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    // QR scanner: ZXing decodes the camera picture inside the app. No Google Play services,
+    // no Google code scanner, no Google Lens, works offline.
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+}

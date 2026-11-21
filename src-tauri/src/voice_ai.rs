@@ -163,15 +163,61 @@ pub fn parse_reply(stdout: &str) -> Result<serde_json::Value, String> {
     }
 }
 
+/// Run the helper and wait for it, but stop (kill it) as soon as `cancel` turns true.
+/// Returns Err(`CANCELLED`) in that case.
+pub const CANCELLED: &str = "Test cancelled.";
+
+fn run_cancellable(mut cmd: Command, cancel: &AtomicBool) -> Result<std::process::Output, String> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Cannot start the voice engine's Python: {e}"))?;
+    // read both pipes on their own threads, so a chatty helper can never block on a full pipe
+    let mut so = child.stdout.take().ok_or("Cannot read the voice engine's answer.")?;
+    let mut se = child.stderr.take().ok_or("Cannot read the voice engine's answer.")?;
+    let t_out = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = so.read_to_end(&mut b);
+        b
+    });
+    let t_err = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = se.read_to_end(&mut b);
+        b
+    });
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = t_out.join();
+            let _ = t_err.join();
+            return Err(CANCELLED.to_string());
+        }
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(e) => return Err(format!("The voice engine stopped in a strange way: {e}")),
+        }
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: t_out.join().unwrap_or_default(),
+        stderr: t_err.join().unwrap_or_default(),
+    })
+}
+
 /// Turn recorded mono audio into the voice stored in `voice_dir` (Test voice).
 /// Slow the first time (loads PyTorch and the models): call from a worker thread.
-pub fn convert(engine: &Engine, voice_dir: &Path, samples: &[f32], rate: u32) -> Result<Converted, String> {
+/// `cancel` turning true stops the helper.
+pub fn convert(engine: &Engine, voice_dir: &Path, samples: &[f32], rate: u32, cancel: &AtomicBool) -> Result<Converted, String> {
     let tmp = std::env::temp_dir().join("rustboard-ai-engine");
     fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let (src, dst) = (tmp.join("in.f32"), tmp.join("out.f32"));
     let _ = fs::remove_file(&dst);
     fs::write(&src, f32_to_bytes(samples)).map_err(|e| format!("Cannot write the clip: {e}"))?;
-    let out = command(
+    let cmd = command(
         engine,
         &[
             "convert",
@@ -181,10 +227,8 @@ pub fn convert(engine: &Engine, voice_dir: &Path, samples: &[f32], rate: u32) ->
             &rate.to_string(),
             &dst.to_string_lossy(),
         ],
-    )
-    .stdin(Stdio::null())
-    .output()
-    .map_err(|e| format!("Cannot start the voice engine's Python: {e}"))?;
+    );
+    let out = run_cancellable(cmd, cancel)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let v = parse_reply(&stdout).map_err(|e| with_tail(e, &out.stderr))?;
     let rate = v.get("rate").and_then(|x| x.as_u64()).unwrap_or(0) as u32;

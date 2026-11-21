@@ -301,6 +301,12 @@ fn ai_test(app: tauri::AppHandle, state: State<'_, AppState>, voice: String) -> 
     voice_test::run(&engine, &dir, &mic)
 }
 
+/// "Cancel" while Test voice runs: stops the recording or the conversion.
+#[tauri::command]
+fn ai_test_cancel() {
+    voice_test::cancel();
+}
+
 /// Play one of the two test clips ("original" or "converted") like a sound.
 #[tauri::command]
 fn ai_test_play(state: State<'_, AppState>, which: String) -> Result<(), String> {
@@ -417,6 +423,7 @@ fn main() {
             voice_import,
             voice_remove,
             ai_test,
+            ai_test_cancel,
             ai_test_play,
             select_preset,
             play_sound,

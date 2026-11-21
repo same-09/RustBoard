@@ -123,10 +123,10 @@
 <div class="screen" id="connect">
   <div class="card">
     <h1>Connect to Rustboard</h1>
-    <p>On the PC: Rustboard &gt; Settings &gt; Phone remote &gt; turn it on &gt; <b>Copy link</b>. Send the link to this phone, copy it, then press Paste.</p>
+    <p>On the PC: Rustboard &gt; Settings &gt; Phone remote &gt; turn it on. Press <b>Scan QR</b> and point the camera at the QR code. Or press <b>Copy link</b>, send it to this phone, copy it, then press Paste.</p>
     <input id="link" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.5:8787/?k=...">
     <div class="err" id="cerr"></div>
-    <div class="row"><button id="paste">Paste</button><button class="go" id="go">Connect</button></div>
+    <div class="row"><button id="scan">Scan QR</button><button id="paste">Paste</button><button class="go" id="go">Connect</button></div>
     <p>Phone and PC must be on the same Wi-Fi.</p>
   </div>
 </div>
@@ -309,6 +309,20 @@ $('smaller').onclick = () => bump(-0.1);
 $('bigger').onclick = () => bump(0.1);
 $('lostchange').onclick = () => showConnect();
 $('retry').onclick = () => { $('lost').classList.remove('show'); startApp(); };
+
+$('scan').onclick = () => {
+  $('cerr').textContent = '';
+  if (window.Android && Android.scanQr) Android.scanQr();
+  else $('cerr').textContent = 'Scanning works only in the Android app. Type or paste the link here.';
+};
+
+// the app calls this when the scanner closes: the text of the QR code, or '' if cancelled
+window.onQr = (text) => {
+  if (!text) return;
+  if (!parseLink(text)) { $('cerr').textContent = 'This QR code is not a Rustboard link. Scan the one in Rustboard > Settings > Phone remote.'; return; }
+  $('link').value = text;
+  $('go').click();
+};
 
 $('paste').onclick = () => {
   try { if (window.Android) $('link').value = Android.paste(); } catch (_) {}

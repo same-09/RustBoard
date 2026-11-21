@@ -309,10 +309,23 @@ def voice_import(args):
     return voice
 
 
+import threading
+_TEST_CANCEL = threading.Event()
+
+
+def ai_test_cancel(_args):
+    _TEST_CANCEL.set()
+
+
 def ai_test(args):
     # real app: 4 s of mic + conversion. Mock: RB_MOCK_ENGINE=1 pretends the engine works.
     import time
-    time.sleep(float(os.environ.get("RB_MOCK_TEST_SECS", "4.5")))
+    _TEST_CANCEL.clear()
+    end = time.time() + float(os.environ.get("RB_MOCK_TEST_SECS", "4.5"))
+    while time.time() < end:
+        if _TEST_CANCEL.is_set():
+            raise ValueError("Test cancelled.")
+        time.sleep(0.05)
     if os.environ.get("RB_MOCK_ENGINE") == "1":
         return {"original": True, "converted": True, "error": None, "recorded_secs": 4.0, "convert_secs": 2.9,
                 "speed": 0.73, "verdict": "tight", "peak_db": -12.0}
@@ -325,7 +338,15 @@ def voice_remove(args):
     _VOICES[:] = [v for v in _VOICES if v["id"] != args["id"]]
 
 
+def remote_info(_args):
+    # a fake QR picture (checkerboard): the real one comes from Rust
+    cells = "".join('<rect x="%d" y="%d" width="1" height="1"/>' % (x, y) for x in range(21) for y in range(21) if (x * 7 + y * 3 + x * y) % 3 == 0)
+    qr = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 25 25" shape-rendering="crispEdges"><rect x="-2" y="-2" width="25" height="25" fill="#fff"/><g fill="#000">%s</g></svg>' % cells
+    return {"running": True, "url": "http://192.168.1.6:8787/?k=d5e70dbe7fa4056731ad599e83c", "qr": qr}
+
+
 COMMANDS = {
+    "remote_info": remote_info,
     "ai_status": ai_status,
     "ai_install": ai_install,
     "ai_install_status": ai_install_status,
@@ -335,6 +356,7 @@ COMMANDS = {
     "voice_import": voice_import,
     "voice_remove": voice_remove,
     "ai_test": ai_test,
+    "ai_test_cancel": ai_test_cancel,
     "ai_test_play": make_noop("play test clip"),
     "image_data": image_data,
     "get_levels": get_levels,

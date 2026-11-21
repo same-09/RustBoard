@@ -1,5 +1,7 @@
-//! Phone remote, like a Stream Deck. A tiny web server runs on your local network (Wi-Fi).
-//! Open the link (or scan the QR code) on your phone: tap a sound to play it.
+//! Phone remote, like a Stream Deck. A tiny server runs on your local network (Wi-Fi).
+//! The Rustboard Remote Android app (folder `android/`) connects to it: paste the link there.
+//! There is no web page any more: opening the link in a browser only shows a short message.
+//! The app scans the QR code of the link (its own camera screen, no Google scanner).
 //!
 //! Off by default. The link holds a secret token; whoever has the link can use the remote.
 //! Plain HTTP, local network only: do not forward the port on your router.
@@ -16,8 +18,6 @@ use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tiny_http::{Header, Request, Response, Server};
-
-const PAGE: &str = include_str!("remote.html");
 
 struct Running {
     server: Arc<Server>,
@@ -188,13 +188,20 @@ fn handle(app: &AppHandle, rq: Request) {
         Err(_) => false,
     };
     if !allowed {
-        return reply(rq, 403, "text/plain; charset=utf-8", "Wrong link. Open Rustboard > Settings > Phone remote and scan the QR code again.".into());
+        return reply(rq, 403, "text/plain; charset=utf-8", "Wrong link. Open Rustboard > Settings > Phone remote and scan the QR code in the Rustboard Remote app again.".into());
     }
 
     let num = |name: &str| q.get(name).and_then(|v| v.parse::<usize>().ok());
 
     let out: Option<Value> = match path {
-        "/" => return reply(rq, 200, "text/html; charset=utf-8", PAGE.to_string()),
+        "/" => {
+            return reply(
+                rq,
+                200,
+                "text/plain; charset=utf-8",
+                "Rustboard is running. This link is for the Rustboard Remote Android app, not for a browser. Open the app on your phone and paste this link there.".into(),
+            )
+        }
         "/api/state" => state.config.lock().ok().map(|cfg| state_json(&cfg)),
         "/api/play" => mutate(app, |cfg, st| {
             let pi = num("p").filter(|i| *i < cfg.presets.len()).unwrap_or(cfg.selected_preset);
