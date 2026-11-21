@@ -11,7 +11,7 @@ android {
         minSdk 24
         targetSdk 34
         // the GitHub workflow sets these from the tag (v0.1.7 -> 0.1.7)
-        versionCode (System.getenv('RB_VERSION_CODE') ?: '1').toInteger()
+        versionCode Integer.parseInt(System.getenv('RB_VERSION_CODE') ?: '1')
         versionName System.getenv('RB_VERSION_NAME') ?: '0.1.0'
     }
 
