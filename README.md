@@ -209,6 +209,8 @@ Cara pakai:
 
 Link diingat. Tombol **PC** kembali ke layar sambung.
 
+Kalau aplikasi crash, layar merah berisi error muncul saat dibuka lagi (ada tombol Copy), supaya penyebabnya bisa dikirim.
+
 Pemindai QR buatan aplikasi sendiri (library ZXing yang open source, jalan di dalam APK). Tidak memakai Google Code Scanner, Google Play services, atau Google Lens, dan jalan tanpa internet.
 
 APK dibangun oleh GitHub (`.github/workflows/android.yml`). Tag seperti `v0.1.7` menambahkan `Rustboard-Remote_0.1.7.apk` ke Release yang sama dengan setup Windows. Di HP: buka APK dan izinkan "install unknown apps" untuk aplikasi file atau browsermu. Build ditandatangani dengan `android/rustboard-remote.keystore`, kunci publik di repo ini supaya tiap build bisa menimpa versi sebelumnya. Cukup untuk alat pribadi, tidak untuk Play Store.

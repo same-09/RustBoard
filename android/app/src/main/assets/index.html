@@ -81,6 +81,8 @@
   .card .row button { flex: 1; border-radius: 0.714rem; padding: 0.857rem; background: var(--card); font-weight: 600; }
   .card .row .go { background: var(--accent); color: var(--accent-text); }
   .card .err { color: var(--bad); min-height: 1.286rem; }
+  #crashscreen { z-index: 9; }
+  #crashtext { margin: 0; max-height: 9rem; overflow: auto; padding: 0.714rem; border-radius: 0.714rem; background: var(--card); color: var(--bad); font-size: 0.786rem; white-space: pre-wrap; word-break: break-all; user-select: text; -webkit-user-select: text; }
   #lost { flex-direction: column; text-align: center; gap: 0.857rem; color: var(--dim); }
   #lost button { border-radius: 0.714rem; padding: 0.786rem 1.286rem; background: var(--card); color: var(--text); font-weight: 600; }
   #lost .row { display: flex; gap: 0.571rem; }
@@ -128,6 +130,15 @@
     <div class="err" id="cerr"></div>
     <div class="row"><button id="scan">Scan QR</button><button id="paste">Paste</button><button class="go" id="go">Connect</button></div>
     <p>Phone and PC must be on the same Wi-Fi.</p>
+  </div>
+</div>
+
+<div class="screen" id="crashscreen">
+  <div class="card">
+    <h1>The app crashed last time</h1>
+    <p>Send a screenshot of this to the developer. It shows what went wrong.</p>
+    <pre id="crashtext"></pre>
+    <div class="row"><button id="crashcopy">Copy</button><button class="go" id="crashclose">Close</button></div>
   </div>
 </div>
 
@@ -315,6 +326,17 @@ $('scan').onclick = () => {
   if (window.Android && Android.scanQr) Android.scanQr();
   else $('cerr').textContent = 'Scanning works only in the Android app. Type or paste the link here.';
 };
+
+// the scanner could not open (no permission, or an error): show why
+window.onQrError = (msg) => { $('cerr').textContent = msg; };
+
+// the app calls this at start when the last run crashed: show the error on its own screen
+window.onCrash = (text) => {
+  $('crashtext').textContent = String(text).slice(0, 1800);
+  $('crashscreen').classList.add('show');
+};
+$('crashcopy').onclick = () => { try { Android.copy($('crashtext').textContent); } catch (_) {} };
+$('crashclose').onclick = () => { try { Android.clearCrash(); } catch (_) {} $('crashscreen').classList.remove('show'); };
 
 // the app calls this when the scanner closes: the text of the QR code, or '' if cancelled
 window.onQr = (text) => {
