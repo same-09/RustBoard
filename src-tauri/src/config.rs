@@ -171,6 +171,15 @@ pub struct Config {
     pub tts_voice: String,
     #[serde(default)]
     pub tts_rate: i32,
+    /// "windows" (offline, default) or "google" (Google Cloud, online, needs an API key).
+    #[serde(default)]
+    pub tts_engine: String,
+    /// Google Cloud API key. Stays in this config file on this PC (not in presets or packs).
+    #[serde(default)]
+    pub tts_google_key: String,
+    /// Google voice name, e.g. "id-ID-Standard-A".
+    #[serde(default)]
+    pub tts_google_voice: String,
     /// Phone remote: a small web page on the local network that plays sounds. Off by default.
     #[serde(default)]
     pub remote_on: bool,
@@ -220,6 +229,9 @@ impl Default for Config {
             ai_engine_dir: String::new(),
             tts_voice: String::new(),
             tts_rate: 0,
+            tts_engine: String::new(),
+            tts_google_key: String::new(),
+            tts_google_voice: String::new(),
             remote_on: false,
             remote_port: d_remote_port(),
             remote_token: String::new(),
@@ -270,6 +282,10 @@ impl Config {
             self.fx_preset = d_fx_preset();
         }
         self.tts_rate = self.tts_rate.clamp(crate::tts::RATE_MIN, crate::tts::RATE_MAX);
+        if self.tts_engine != "google" {
+            self.tts_engine = "windows".into();
+        }
+        self.tts_google_key = self.tts_google_key.trim().to_string();
         self.fx_keys.retain(|id, keys| crate::fx::is_known(id) && !keys.is_empty());
         if self.remote_port < 1024 {
             self.remote_port = d_remote_port();

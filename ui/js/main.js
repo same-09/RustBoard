@@ -1231,10 +1231,17 @@ const VOICE_SITE = 'https://voice-models.com/';
 
 /* ---------- text to speech ---------- */
 
-// Type text, Windows reads it out loud. It plays like a sound, so it reaches Discord on Go Live.
+const GOOGLE_PICK = '__google__'; // the "Google Cloud TTS" entry of the Voice list
+
+// Type text, it is read out loud. It plays like a sound, so it reaches Discord on Go Live.
+// Two voices: Windows (offline) or Google Cloud (online, needs an API key).
 function ttsSection() {
   const input = h('input', { type: 'text', maxlength: 1000, placeholder: 'Type something to say…', class: 'tts-input' });
   const status = h('div', { class: 'fx-status' }, '');
+  const warn = (msg) => { status.classList.add('warn'); status.textContent = String(msg); };
+  const info = (msg) => { status.classList.remove('warn'); status.textContent = msg; };
+  const isGoogle = () => cfg.tts_engine === 'google';
+
   const voiceSel = h('select', { disabled: true }, h('option', { value: '' }, 'Loading voices…'));
   const rateLabel = h('span', { class: 'muted' }, '');
   const showRate = () => { const r = cfg.tts_rate || 0; rateLabel.textContent = r === 0 ? 'Normal' : (r > 0 ? `+${r}` : String(r)); };
@@ -1244,6 +1251,94 @@ function ttsSection() {
   });
   showRate();
 
+  /* Google part: API key + Save, and the Google voice list. Shown only when Google is picked. */
+  const keyInput = h('input', {
+    type: 'password', class: 'tts-input', placeholder: 'Paste your Google API key', autocomplete: 'off',
+    spellcheck: false, value: cfg.tts_google_key || '',
+  });
+  const gVoiceSel = h('select', { disabled: true }, h('option', { value: '' }, 'Save the key first'));
+  const keyNote = h('div', { class: 'd' }, '');
+
+  const loadGoogleVoices = async () => {
+    if (!cfg.tts_google_key) {
+      gVoiceSel.replaceChildren(h('option', { value: '' }, 'Save the key first'));
+      gVoiceSel.disabled = true;
+      return false;
+    }
+    keyNote.textContent = 'Checking the key…';
+    try {
+      await sync();
+      const list = await call('tts_google_voices');
+      gVoiceSel.replaceChildren(...list.map((v) => h('option', { value: v.name }, `${v.name} (${v.lang})`)));
+      let want = cfg.tts_google_voice;
+      if (!list.some((v) => v.name === want)) {
+        const pick = list.find((v) => /^id-ID-Standard/.test(v.name)) || list.find((v) => /^id-/.test(v.name)) || list[0];
+        want = pick ? pick.name : '';
+        cfg.tts_google_voice = want;
+        commit();
+      }
+      gVoiceSel.value = want;
+      gVoiceSel.disabled = false;
+      keyNote.textContent = `The key works ✓ ${list.length} voices.`;
+      return true;
+    } catch (e) {
+      gVoiceSel.replaceChildren(h('option', { value: '' }, 'Key does not work'));
+      gVoiceSel.disabled = true;
+      keyNote.textContent = String(e);
+      return false;
+    }
+  };
+  const saveKey = async () => {
+    cfg.tts_google_key = keyInput.value.trim();
+    commit();
+    if (!cfg.tts_google_key) { keyNote.textContent = 'Key removed.'; await loadGoogleVoices(); return; }
+    const ok = await loadGoogleVoices();
+    if (ok) toast('Google API key saved.');
+  };
+  keyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKey(); } });
+  gVoiceSel.onchange = () => { cfg.tts_google_voice = gVoiceSel.value; commit(); };
+
+  const googleRows = h('div', { style: 'display: contents' },
+    h('div', { class: 'set-row col' },
+      h('div', { class: 'txt' },
+        h('div', { class: 't' }, 'Google API key'),
+        h('div', { class: 'd' }, 'Google Cloud Console > APIs & Services: turn on "Cloud Text-to-Speech API", then Credentials > Create API key. Billing must be on; Google gives a free amount each month. The key is saved on this PC only.')),
+      h('div', { class: 'tts-line' }, keyInput, h('button', { class: 'primary', onclick: saveKey }, 'Save')),
+      keyNote),
+    h('div', { class: 'set-row' },
+      h('div', { class: 'txt' }, h('div', { class: 't' }, 'Google voice'),
+        h('div', { class: 'd' }, 'Indonesian voices are first in the list.')),
+      h('div', { class: 'ctl' }, gVoiceSel)));
+  const showGoogle = () => { googleRows.style.display = isGoogle() ? 'contents' : 'none'; };
+  showGoogle();
+
+  voiceSel.onchange = () => {
+    if (voiceSel.value === GOOGLE_PICK) {
+      cfg.tts_engine = 'google';
+    } else {
+      cfg.tts_engine = 'windows';
+      cfg.tts_voice = voiceSel.value;
+    }
+    commit();
+    showGoogle();
+    if (isGoogle() && gVoiceSel.disabled) loadGoogleVoices();
+  };
+
+  const fillVoices = (list) => {
+    voiceSel.replaceChildren(
+      h('option', { value: '' }, 'Windows default'),
+      ...list.map((v) => h('option', { value: v.name }, `${v.name} (${v.lang})`)),
+      h('option', { value: GOOGLE_PICK }, 'Google Cloud TTS (online)'));
+    voiceSel.value = isGoogle() ? GOOGLE_PICK : (cfg.tts_voice || '');
+    if (!voiceSel.value) voiceSel.value = isGoogle() ? GOOGLE_PICK : ''; // saved Windows voice was removed
+    voiceSel.disabled = false;
+  };
+  call('tts_voices').then(fillVoices).catch((e) => {
+    fillVoices([]); // Windows voices not available: Google still can be picked
+    warn(e);
+  });
+  if (isGoogle() && cfg.tts_google_key) loadGoogleVoices();
+
   let busy = false;
   const speakBtn = h('button', { class: 'primary' }, 'Speak');
   const speak = async () => {
@@ -1251,16 +1346,14 @@ function ttsSection() {
     if (busy || !text) return;
     busy = true;
     speakBtn.disabled = true;
-    status.classList.remove('warn');
-    status.textContent = 'Making the voice…';
+    info(isGoogle() ? 'Asking Google…' : 'Making the voice…');
     try {
       await sync();
       await call('tts_speak', { text });
-      status.textContent = live ? 'Speaking to Discord (Go Live is on).' : 'Speaking. Press Go Live so Discord hears it too.';
+      info(live ? 'Speaking to Discord (Go Live is on).' : 'Speaking. Press Go Live so Discord hears it too.');
       input.select();
     } catch (e) {
-      status.classList.add('warn');
-      status.textContent = String(e);
+      warn(e);
     } finally {
       busy = false;
       speakBtn.disabled = false;
@@ -1270,31 +1363,19 @@ function ttsSection() {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); speak(); } });
   const stopBtn = h('button', { onclick: () => call('audio_stop').catch(() => {}) }, 'Stop');
 
-  call('tts_voices').then((list) => {
-    voiceSel.replaceChildren(h('option', { value: '' }, 'Windows default'),
-      ...list.map((v) => h('option', { value: v.name }, `${v.name} (${v.lang})`)));
-    voiceSel.value = cfg.tts_voice || '';
-    if (voiceSel.value !== (cfg.tts_voice || '')) voiceSel.value = ''; // saved voice was removed
-    voiceSel.disabled = false;
-  }).catch((e) => {
-    voiceSel.replaceChildren(h('option', { value: '' }, 'Not available'));
-    status.classList.add('warn');
-    status.textContent = String(e);
-  });
-  voiceSel.onchange = () => { cfg.tts_voice = voiceSel.value; commit(); };
-
   return h('section', { class: 'set-section' },
     h('h4', {}, 'Text to speech'),
     h('div', { class: 'set-card' },
       h('div', { class: 'set-row col' },
         h('div', { class: 'txt' },
           h('div', { class: 't' }, 'Say it with a voice'),
-          h('div', { class: 'd' }, 'Type text and press Enter. It is read out loud like a sound, so your friends hear it on Discord when Go Live is on. Light: no graphics card needed.')),
+          h('div', { class: 'd' }, 'Type text and press Enter. It is read out loud like a sound, so your friends hear it on Discord when Go Live is on. No graphics card needed.')),
         h('div', { class: 'tts-line' }, input, speakBtn, stopBtn)),
       h('div', { class: 'set-row' },
         h('div', { class: 'txt' }, h('div', { class: 't' }, 'Voice'),
-          h('div', { class: 'd' }, 'More voices: Windows Settings > Time & language > Speech.')),
+          h('div', { class: 'd' }, 'Windows voices work offline. Google Cloud TTS sounds more natural but is online: your text goes to Google.')),
         h('div', { class: 'ctl' }, voiceSel)),
+      googleRows,
       h('div', { class: 'set-row' },
         h('div', { class: 'txt' }, h('div', { class: 't' }, 'Speed')),
         h('div', { class: 'ctl' }, h('div', { class: 'inline' }, rate, rateLabel))),

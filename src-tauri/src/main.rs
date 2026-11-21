@@ -17,6 +17,7 @@ mod voice_ai;
 mod voice_test;
 mod state;
 mod tts;
+mod tts_util;
 mod updater;
 
 use audio::{AudioCmd, AudioSettings, Devices, Levels, LevelsOut, LiveStatus, SoundLevelOut};
@@ -353,14 +354,25 @@ fn tts_voices(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Vec<t
     tts::voices(&base_dir(&app, &state))
 }
 
-/// Read `text` out loud. It is played like a sound: headphones, and Discord when Go Live is on.
+/// Voices of Google Cloud for the saved API key (online). Also tells if the key works.
+/// The UI saves its edits first (`sync`), so this reads the key that was just typed.
+#[tauri::command(async)]
+fn tts_google_voices(state: State<'_, AppState>) -> Result<Vec<tts::Voice>, String> {
+    let key = state.config.lock().map_err(|e| e.to_string())?.tts_google_key.clone();
+    tts::google_voices(&key)
+}
+
+/// Read `text` out loud with the chosen engine. It is played like a sound: headphones,
+/// and Discord when Go Live is on.
 #[tauri::command(async)]
 fn tts_speak(app: tauri::AppHandle, state: State<'_, AppState>, text: String) -> Result<(), String> {
-    let (voice, rate) = {
-        let c = state.config.lock().map_err(|e| e.to_string())?;
-        (c.tts_voice.clone(), c.tts_rate)
+    let c = state.config.lock().map_err(|e| e.to_string())?.clone();
+    let work = base_dir(&app, &state);
+    let wav = if c.tts_engine == "google" {
+        tts::google_synth(&work, &c.tts_google_key, &c.tts_google_voice, &text, c.tts_rate)?
+    } else {
+        tts::synth(&work, &text, &c.tts_voice, c.tts_rate)?
     };
-    let wav = tts::synth(&base_dir(&app, &state), &text, &voice, rate)?;
     state.send(AudioCmd::Play { file: wav.to_string_lossy().into_owned(), volume: 1.0, looped: false, fx: 0 });
     Ok(())
 }
@@ -464,6 +476,7 @@ fn main() {
             pack_peek,
             pack_import,
             tts_voices,
+            tts_google_voices,
             tts_speak,
             open_soundboard_folder,
             ai_status,

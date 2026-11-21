@@ -3,10 +3,13 @@
 //! The speech becomes a small .wav file that is played like a sound, so it goes to the same
 //! places as the soundboard (headphones, and Discord when Go Live is on).
 
-use serde::Serialize;
+use crate::tts_util;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 /// Longest text we read at once.
 pub const MAX_CHARS: usize = 1000;
@@ -101,10 +104,9 @@ pub fn voices(work: &Path) -> Result<Vec<Voice>, String> {
     Ok(v)
 }
 
-/// Turn `text` into a .wav file and return its path. `rate`: -10 (slow) .. 10 (fast).
-pub fn synth(work: &Path, text: &str, voice: &str, rate: i32) -> Result<PathBuf, String> {
-    let text = clean_text(text)?;
-    let rate = rate.clamp(RATE_MIN, RATE_MAX);
+/// A fresh .wav path in `Documents/RustBoard/tts`. Old speech files are deleted
+/// (one may still be playing: then Windows refuses and it stays).
+fn new_wav_path(work: &Path) -> Result<PathBuf, String> {
     let dir = work.join("tts");
     fs::create_dir_all(&dir).map_err(|e| format!("Cannot make '{}': {e}", dir.display()))?;
     // old speech files go (one may still be playing: then Windows refuses and it stays)
@@ -119,7 +121,14 @@ pub fn synth(work: &Path, text: &str, voice: &str, rate: i32) -> Result<PathBuf,
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let wav = dir.join(format!("speech-{stamp}.wav"));
+    Ok(dir.join(format!("speech-{stamp}.wav")))
+}
+
+/// Turn `text` into a .wav file and return its path. `rate`: -10 (slow) .. 10 (fast).
+pub fn synth(work: &Path, text: &str, voice: &str, rate: i32) -> Result<PathBuf, String> {
+    let text = clean_text(text)?;
+    let rate = rate.clamp(RATE_MIN, RATE_MAX);
+    let wav = new_wav_path(work)?;
     let rate_s = rate.to_string();
     let out_s = wav.to_string_lossy().into_owned();
     let env: [(&str, &str); 4] = [
@@ -133,6 +142,114 @@ pub fn synth(work: &Path, text: &str, voice: &str, rate: i32) -> Result<PathBuf,
         Ok(m) if m.len() > 44 => Ok(wav),
         _ => Err("Windows made no sound from this text.".into()),
     }
+}
+
+/* ---------- Google Cloud Text-to-Speech (the official one, needs an API key) ---------- */
+
+const GOOGLE: &str = "https://texttospeech.googleapis.com/v1";
+
+#[derive(Deserialize)]
+struct GVoices {
+    #[serde(default)]
+    voices: Vec<GVoice>,
+}
+
+#[derive(Deserialize)]
+struct GVoice {
+    name: String,
+    #[serde(default, rename = "languageCodes")]
+    language_codes: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct GSynth {
+    #[serde(rename = "audioContent")]
+    audio_content: String,
+}
+
+#[derive(Deserialize)]
+struct GErr {
+    error: Option<GErrIn>,
+}
+
+#[derive(Deserialize)]
+struct GErrIn {
+    message: Option<String>,
+}
+
+/// An API key is letters, digits, "-" and "_". Anything else is refused, so a pasted
+/// key can never change the address we call.
+pub fn check_key(key: &str) -> Result<&str, String> {
+    let k = key.trim();
+    if k.is_empty() {
+        return Err("Paste your Google API key first.".into());
+    }
+    if k.len() > 200 || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("This does not look like a Google API key.".into());
+    }
+    Ok(k)
+}
+
+fn read_body(r: ureq::Response) -> Result<String, String> {
+    let mut s = String::new();
+    r.into_reader()
+        .take(40 * 1024 * 1024)
+        .read_to_string(&mut s)
+        .map_err(|e| format!("Cannot read the answer of Google: {e}"))?;
+    Ok(s)
+}
+
+/// One call to Google. Errors never contain the address (the key is in it).
+fn google_call(path: &str, key: &str, body: Option<&str>) -> Result<String, String> {
+    let url = format!("{GOOGLE}/{path}?key={key}");
+    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
+    let res = match body {
+        Some(b) => agent.post(&url).set("content-type", "application/json").send_string(b),
+        None => agent.get(&url).call(),
+    };
+    match res {
+        Ok(r) => read_body(r),
+        Err(ureq::Error::Status(code, r)) => {
+            let text = read_body(r).unwrap_or_default();
+            let msg = serde_json::from_str::<GErr>(&text).ok().and_then(|e| e.error).and_then(|e| e.message).unwrap_or_default();
+            Err(tts_util::explain(code, &msg))
+        }
+        Err(ureq::Error::Transport(t)) => Err(format!("Cannot reach Google ({:?}). Check your internet.", t.kind())),
+    }
+}
+
+/// The voices Google offers for this key (also a way to check that the key works).
+pub fn google_voices(key: &str) -> Result<Vec<Voice>, String> {
+    let key = check_key(key)?;
+    let text = google_call("voices", key, None)?;
+    let list: GVoices = serde_json::from_str(&text).map_err(|_| "Google sent an answer we do not understand.".to_string())?;
+    let mut v: Vec<Voice> = list
+        .voices
+        .into_iter()
+        .map(|g| {
+            let lang = g.language_codes.first().cloned().or_else(|| tts_util::lang_of(&g.name)).unwrap_or_default();
+            Voice { name: g.name, lang }
+        })
+        .collect();
+    // Indonesian first, then English, then the rest
+    v.sort_by_key(|x| (!x.lang.starts_with("id"), !x.lang.starts_with("en"), x.lang.clone(), x.name.clone()));
+    Ok(v)
+}
+
+/// Turn `text` into a .wav file with a Google voice and return its path.
+pub fn google_synth(work: &Path, key: &str, voice: &str, text: &str, rate: i32) -> Result<PathBuf, String> {
+    let key = check_key(key)?;
+    let text = clean_text(text)?;
+    let body = tts_util::synth_body(&text, voice, rate)?;
+    let answer = google_call("text:synthesize", key, Some(&body))?;
+    let g: GSynth = serde_json::from_str(&answer).map_err(|_| "Google sent an answer we do not understand.".to_string())?;
+    let audio = tts_util::base64_decode(&g.audio_content).ok_or("Google sent broken audio.")?;
+    if audio.len() < 44 || &audio[..4] != b"RIFF" {
+        return Err("Google sent audio in a format we cannot play.".into());
+    }
+    let wav = new_wav_path(work)?;
+    fs::write(&wav, audio).map_err(|e| format!("Cannot save the speech: {e}"))?;
+    Ok(wav)
 }
 
 #[cfg(test)]
@@ -154,6 +271,17 @@ mod tests {
         assert!(clean_text(&"a".repeat(MAX_CHARS)).is_ok());
         assert!(clean_text(&"a".repeat(MAX_CHARS + 1)).is_err());
         assert!(clean_text(&"é".repeat(MAX_CHARS)).is_ok(), "limit counts characters, not bytes");
+    }
+
+    #[test]
+    fn only_real_looking_keys_are_used() {
+        assert_eq!(check_key("  AIzaSyA-b_c123 ").unwrap(), "AIzaSyA-b_c123");
+        assert!(check_key("").is_err());
+        assert!(check_key("   ").is_err());
+        assert!(check_key("abc&voice=x").is_err());
+        assert!(check_key("a b").is_err());
+        assert!(check_key("abc/../x").is_err());
+        assert!(check_key(&"a".repeat(201)).is_err());
     }
 
     #[test]

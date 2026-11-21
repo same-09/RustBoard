@@ -183,13 +183,27 @@ Satu preset bisa dijadikan **satu file** `.rbpack`: isinya preset, semua file su
 
 ## Text to speech (ketik, lalu dibacakan)
 
-Di tab **Sound Effects**, bagian **Text to speech**. Ketik teks, tekan **Enter** (atau **Speak**), dan Windows membacakannya. Suaranya diputar seperti sound biasa, jadi masuk ke headphone dan ke Discord lewat mic virtual saat **Go Live** menyala. **Stop** menghentikannya.
+Di tab **Sound Effects**, bagian **Text to speech**. Ketik teks, tekan **Enter** (atau **Speak**), dan teksnya dibacakan. Suaranya diputar seperti sound biasa, jadi masuk ke headphone dan ke Discord lewat mic virtual saat **Go Live** menyala. **Stop** menghentikannya. Tidak butuh GPU.
 
-- **Ringan, tanpa GPU.** Memakai suara yang sudah ada di Windows (SAPI lewat PowerShell). Tidak ada yang diunduh, tidak ada model AI.
-- **Voice** dan **Speed** (-10 sampai +10) disimpan di config.
-- Suara bahasa lain (misalnya Indonesia): Windows Settings > Time & language > Speech > Add voices.
-- Teks maksimal 1000 karakter. Pembacaan pertama butuh sekitar satu detik untuk menyiapkan suara.
-- Hanya Windows. Kode: `src-tauri/src/tts.rs`. Teks dikirim lewat variabel lingkungan, tidak pernah ditempel ke skrip, jadi tidak bisa menjalankan perintah.
+Dropdown **Voice** punya dua jenis suara:
+
+- **Suara Windows** (offline, default). Memakai suara yang sudah ada di Windows (SAPI lewat PowerShell). Tidak ada yang diunduh. Suara bahasa lain: Windows Settings > Time & language > Speech.
+- **Google Cloud TTS (online)** (resmi). Suaranya lebih natural. Teksmu dikirim ke Google, jadi butuh internet.
+
+**Memakai Google Cloud TTS:**
+
+1. Di [Google Cloud Console](https://console.cloud.google.com/), buat atau pilih project, aktifkan billing, lalu aktifkan **Cloud Text-to-Speech API** (APIs & Services > Library).
+2. APIs & Services > Credentials > **Create credentials > API key**. Salin kuncinya.
+3. Di Rustboard, pilih **Google Cloud TTS (online)** di dropdown Voice. Kolom **Google API key** muncul. Tempel kunci, tekan **Save** (atau Enter).
+4. Rustboard mengecek kuncinya dan mengisi daftar **Google voice** (suara Indonesia di atas). Kalau kunci salah, alasan dari Google tampil di layar.
+
+Catatan Google:
+- Google memberi jatah gratis tiap bulan, lewat dari itu berbayar. Cek harga terbaru di halaman Google Cloud.
+- Kunci disimpan di `config.json` di PC-mu saja. Kunci **tidak** ikut `.rbpack` dan tidak dikirim ke Remote HP. Sebaiknya batasi kuncinya ke Cloud Text-to-Speech API saja di Console.
+- Kalau error 403: periksa API sudah aktif untuk kunci itu dan billing menyala. Kalau 429: jatah habis atau terlalu sering.
+- Kunci hanya boleh huruf, angka, `-` dan `_`; yang lain ditolak. Alamat Google tidak pernah ikut tertulis di pesan error (supaya kunci tidak bocor).
+
+Teks maksimal 1000 karakter. Speed -10 sampai +10 berlaku untuk dua jenis suara (Google: 0,5x sampai 2x). Pembacaan Windows yang pertama butuh sekitar satu detik. Kode: `src-tauri/src/tts.rs` dan `tts_util.rs`. Teks ke PowerShell dikirim lewat variabel lingkungan, tidak pernah ditempel ke skrip.
 
 ## Noise gate dan meter
 
