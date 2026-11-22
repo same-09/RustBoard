@@ -16,6 +16,15 @@ pub const GATE_MAX_DB: i32 = -20;
 fn d_100() -> u32 {
     100
 }
+fn d_live_sound() -> u32 {
+    70
+}
+fn d_live_mic() -> u32 {
+    50
+}
+/// Slider range for the two Live mix levels (percent).
+pub const LIVE_LEVEL_MIN: u32 = 30;
+pub const LIVE_LEVEL_MAX: u32 = 100;
 fn d_true() -> bool {
     true
 }
@@ -145,6 +154,13 @@ pub struct Config {
     /// Limiter: stops loud peaks (sounds and mic) from clipping. On by default.
     #[serde(default = "d_true")]
     pub limiter_on: bool,
+    /// Go Live: how loud sounds are on the cable (percent). Lower leaves room for your voice
+    /// (no crackle when both are loud). 100 = full level, the cable can clip if both peak.
+    #[serde(default = "d_live_sound")]
+    pub live_sound_level: u32,
+    /// Go Live: the loudest your mic may get on the cable (percent) while the limiter is on.
+    #[serde(default = "d_live_mic")]
+    pub live_mic_ceiling: u32,
     /// Show the IN / OUT level meters in Settings.
     #[serde(default = "d_true")]
     pub meters_on: bool,
@@ -219,6 +235,8 @@ impl Default for Config {
             gate_on: false,
             duck_on: false,
             limiter_on: true,
+            live_sound_level: d_live_sound(),
+            live_mic_ceiling: d_live_mic(),
             gate_threshold_db: d_gate_db(),
             meters_on: true,
             fx_on: false,
@@ -277,6 +295,8 @@ impl Config {
         self.primary_device_volume = self.primary_device_volume.min(100);
         self.secondary_device_volume = self.secondary_device_volume.min(100);
         self.mic_volume = self.mic_volume.min(100);
+        self.live_sound_level = self.live_sound_level.clamp(LIVE_LEVEL_MIN, LIVE_LEVEL_MAX);
+        self.live_mic_ceiling = self.live_mic_ceiling.clamp(LIVE_LEVEL_MIN, LIVE_LEVEL_MAX);
         self.gate_threshold_db = self.gate_threshold_db.clamp(GATE_MIN_DB, GATE_MAX_DB);
         if !crate::fx::is_known(&self.fx_preset) {
             self.fx_preset = d_fx_preset();

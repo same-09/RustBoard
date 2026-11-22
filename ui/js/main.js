@@ -988,10 +988,10 @@ function buildSettings() {
     return s;
   };
 
-  const range = (key) => {
+  const range = (key, min = 0) => {
     const label = h('span', { class: 'muted' }, `${cfg[key]}%`);
     const r = h('input', {
-      type: 'range', min: 0, max: 100, value: cfg[key],
+      type: 'range', min, max: 100, value: cfg[key],
       oninput: () => {
         cfg[key] = Number(r.value);
         label.textContent = `${r.value}%`;
@@ -1098,7 +1098,9 @@ function buildSettings() {
     });
     return section('Live mix',
       row('Ducking', 'Sounds get quieter while you speak, so your friends hear you. Works on the output that carries your mic (Go Live). Needs the mic on.', duckSwitch),
-      row('Limiter', 'Stops loud peaks from crackling in Discord. Applies to sounds and to your mic.', limiterSwitch));
+      row('Limiter', 'Stops loud peaks from crackling in Discord. Applies to sounds and to your mic.', limiterSwitch),
+      row('Sound level on the cable', 'How loud your sounds are in Discord while you Go Live. Default 70%. At 100% a loud sound plus a loud voice can crackle.', range('live_sound_level', 30)),
+      row('Mic max level (limiter)', 'The loudest your voice may get in Discord. Default 50%. Raise it if your mic is too quiet. Needs the limiter on.', range('live_mic_ceiling', 30)));
   };
 
   // Phone remote: the Rustboard Remote Android app talks to this PC over Wi-Fi. Off by default.

@@ -51,6 +51,10 @@ pub struct AudioSettings {
     pub duck_on: bool,
     /// stops loud peaks (sounds and mic) from clipping
     pub limiter_on: bool,
+    /// Go Live: sound level on the cable (0.3..=1.0). Replaces the fixed LIVE_SOUND_HEADROOM.
+    pub live_sound_level: f32,
+    /// Go Live: mic ceiling for the limiter (0.3..=1.0). Replaces the fixed MIC_CEILING.
+    pub live_mic_ceiling: f32,
     /// AI Voice wanted right now (on, and the voice exists). The mic goes through the engine.
     pub ai: Option<crate::voice_ai::Plan>,
 }
@@ -73,6 +77,8 @@ impl AudioSettings {
             fx: crate::fx::active_index(c.fx_on, &c.fx_preset),
             duck_on: c.duck_on,
             limiter_on: c.limiter_on,
+            live_sound_level: c.live_sound_level as f32 / 100.0,
+            live_mic_ceiling: c.live_mic_ceiling as f32 / 100.0,
             ai: None, // main.rs fills it in: it knows the RustBoard folder
         }
     }
@@ -131,6 +137,8 @@ pub struct Levels {
     /// settings the sound and mic threads read while they run
     duck_on: AtomicBool,
     limiter_on: AtomicBool,
+    /// mic limiter ceiling as f32 bits (0 = not set yet: use MIC_CEILING)
+    mic_ceiling: AtomicU32,
     /// what the soundboard itself plays: loudest RMS per frequency band since the last read
     bands: [AtomicU32; BANDS],
     /// file of the sound that was started last (the UI matches it to a tile)
@@ -842,7 +850,9 @@ impl Mic {
                             _ => 0.0,
                         };
                         let s = if out_levels.limiter_on.load(Ordering::Relaxed) {
-                            mic_limiter.process(s, MIC_CEILING)
+                            let bits = out_levels.mic_ceiling.load(Ordering::Relaxed);
+                            let ceiling = if bits == 0 { MIC_CEILING } else { f32::from_bits(bits) };
+                            mic_limiter.process(s, ceiling)
                         } else {
                             s
                         };
@@ -922,9 +932,9 @@ pub fn list_devices() -> Devices {
 
 // ---------- virtual cable (Go Live) ----------
 
-/// Headroom for sounds while live: Windows adds sounds and mic on the cable, and a sum
-/// above 1.0 would clip (crackle). -3 dB is enough for normal speech.
-const LIVE_SOUND_HEADROOM: f32 = 0.7;
+// Sound level on the cable while live is now the "Sound level on the cable" slider
+// (Settings > Live mix, default 70% = about -3 dB). Windows adds sounds and mic on the
+// cable, and a sum above 1.0 would clip (crackle), so 100% needs a quiet voice.
 
 /// Pick the playback device that feeds Discord. `wanted` is the user's choice: a device
 /// name, or `AUTO_CABLE` to look for VB-CABLE (then other virtual cables).
@@ -1004,6 +1014,7 @@ impl Engine {
     fn configure(&mut self, s: AudioSettings) {
         self.levels.duck_on.store(s.duck_on, Ordering::Relaxed);
         self.levels.limiter_on.store(s.limiter_on, Ordering::Relaxed);
+        self.levels.mic_ceiling.store(s.live_mic_ceiling.clamp(0.3, 1.0).to_bits(), Ordering::Relaxed);
         self.settings = Some(s);
         self.apply();
     }
@@ -1066,7 +1077,7 @@ impl Engine {
             Some(s) => s,
             None => return,
         };
-        let headroom = if self.live.is_some() { LIVE_SOUND_HEADROOM } else { 1.0 };
+        let headroom = if self.live.is_some() { s.live_sound_level.clamp(0.3, 1.0) } else { 1.0 };
         if let Some(o) = self.primary.as_mut() {
             o.set_gain(s.volume * s.primary_volume);
         }
@@ -1262,7 +1273,8 @@ mod tests {
             live_output: AUTO_CABLE.into(),
             gate_on: false, gate_threshold: 0.003,
             fx: 0,
-            duck_on: false, limiter_on: true, ai: None,
+            duck_on: false, limiter_on: true,
+            live_sound_level: 0.7, live_mic_ceiling: 0.5, ai: None,
         }
     }
 
