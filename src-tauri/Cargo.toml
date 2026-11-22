@@ -29,6 +29,10 @@ tiny_http = "0.12"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 getrandom = "0.2"
 
+# App sound for Go Live: capture the sound of one app (Windows only, process loopback)
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.17"
+
 [profile.release]
 opt-level = "s"
 lto = true

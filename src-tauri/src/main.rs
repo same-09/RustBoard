@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai_setup;
+mod app_capture;
 mod audio;
 mod config;
 mod fx;
@@ -98,6 +99,12 @@ fn remote_new_token(state: State<'_, AppState>) -> Result<Config, String> {
 }
 
 /// Switch preset from the UI.
+/// Running apps, for the App sound picker in Settings. Asks PowerShell: slow, so a worker thread.
+#[tauri::command(async)]
+fn list_apps() -> Result<Vec<app_capture::AppEntry>, String> {
+    app_capture::list_apps()
+}
+
 #[tauri::command]
 fn select_preset(state: State<'_, AppState>, index: usize) -> Result<Config, String> {
     let mut cfg = state.config.lock().map_err(|e| e.to_string())?;
@@ -496,6 +503,7 @@ fn main() {
             audio_resume,
             audio_stop,
             list_devices,
+            list_apps,
             set_live,
             get_levels,
             get_sound_level,

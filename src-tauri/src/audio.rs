@@ -51,6 +51,17 @@ pub struct AudioSettings {
     pub duck_on: bool,
     /// stops loud peaks (sounds and mic) from clipping
     pub limiter_on: bool,
+    /// Go Live: sound level on the cable (0.3..=1.0). Replaces the fixed LIVE_SOUND_HEADROOM.
+    pub live_sound_level: f32,
+    /// Go Live: mic ceiling for the limiter (0.3..=1.0). Replaces the fixed MIC_CEILING.
+    pub live_mic_ceiling: f32,
+    /// Go Live: also send the sound of other apps into the cable
+    pub app_on: bool,
+    /// every app with a window (true) or only `app_names` (false)
+    pub app_all: bool,
+    pub app_names: Vec<String>,
+    /// how loud the apps are on the cable (0..=1)
+    pub app_volume: f32,
     /// AI Voice wanted right now (on, and the voice exists). The mic goes through the engine.
     pub ai: Option<crate::voice_ai::Plan>,
 }
@@ -73,6 +84,12 @@ impl AudioSettings {
             fx: crate::fx::active_index(c.fx_on, &c.fx_preset),
             duck_on: c.duck_on,
             limiter_on: c.limiter_on,
+            live_sound_level: c.live_sound_level as f32 / 100.0,
+            live_mic_ceiling: c.live_mic_ceiling as f32 / 100.0,
+            app_on: c.app_audio_on,
+            app_all: c.app_audio_all,
+            app_names: c.app_audio_apps.clone(),
+            app_volume: c.app_audio_volume as f32 / 100.0,
             ai: None, // main.rs fills it in: it knows the RustBoard folder
         }
     }
@@ -131,6 +148,8 @@ pub struct Levels {
     /// settings the sound and mic threads read while they run
     duck_on: AtomicBool,
     limiter_on: AtomicBool,
+    /// mic limiter ceiling as f32 bits (0 = not set yet: use MIC_CEILING)
+    mic_ceiling: AtomicU32,
     /// what the soundboard itself plays: loudest RMS per frequency band since the last read
     bands: [AtomicU32; BANDS],
     /// file of the sound that was started last (the UI matches it to a tile)
@@ -842,7 +861,9 @@ impl Mic {
                             _ => 0.0,
                         };
                         let s = if out_levels.limiter_on.load(Ordering::Relaxed) {
-                            mic_limiter.process(s, MIC_CEILING)
+                            let bits = out_levels.mic_ceiling.load(Ordering::Relaxed);
+                            let ceiling = if bits == 0 { MIC_CEILING } else { f32::from_bits(bits) };
+                            mic_limiter.process(s, ceiling)
                         } else {
                             s
                         };
@@ -886,6 +907,104 @@ impl Mic {
     }
 }
 
+// ---------- app sound -> cable ----------
+
+/// Plays the sound of other apps (captured by `app_capture`) into the cable while you Go Live.
+struct AppOut {
+    _stream: cpal::Stream,
+    volume: Arc<AtomicU32>,
+    _capture: crate::app_capture::Capture,
+}
+
+impl AppOut {
+    fn start(
+        cable: &str,
+        all: bool,
+        names: Vec<String>,
+        volume: f32,
+        levels: Arc<Levels>,
+        errors: Sender<String>,
+    ) -> Result<AppOut, String> {
+        let host = cpal::default_host();
+        let dev = find_output(&host, cable).ok_or_else(|| format!("App sound output '{}' not found.", cable))?;
+        let cfg = dev.default_output_config().map_err(|e| e.to_string())?;
+        if cfg.sample_format() != cpal::SampleFormat::F32 {
+            return Err("App sound needs a device that supports 32-bit float audio.".into());
+        }
+        let channels = cfg.channels() as usize;
+        let rate = cfg.sample_rate().0;
+        let conf: cpal::StreamConfig = cfg.into();
+
+        let sources: crate::app_capture::Sources = Arc::new(Mutex::new(Vec::new()));
+        let vol = Arc::new(AtomicU32::new(volume.to_bits()));
+        let cb_sources = Arc::clone(&sources);
+        let cb_vol = Arc::clone(&vol);
+        let mut lim_l = Limiter::new(rate);
+        let mut lim_r = Limiter::new(rate);
+        let prime = rate as usize * 2 * 60 / 1000; // start after ~60 ms of sound is queued
+
+        let stream = dev
+            .build_output_stream(
+                &conf,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let v = f32::from_bits(cb_vol.load(Ordering::Relaxed));
+                    let limit = levels.limiter_on.load(Ordering::Relaxed);
+                    let list = cb_sources.lock().ok();
+                    let mut guards: Vec<std::sync::MutexGuard<crate::app_capture::Src>> = match list.as_ref() {
+                        Some(l) => l.iter().filter_map(|s| s.lock().ok()).collect(),
+                        None => Vec::new(),
+                    };
+                    for g in guards.iter_mut() {
+                        if !g.primed && g.q.len() >= prime {
+                            g.primed = true;
+                        }
+                    }
+                    for frame in data.chunks_mut(channels.max(1)) {
+                        let (mut l, mut r) = (0.0f32, 0.0f32);
+                        for g in guards.iter_mut() {
+                            if g.primed {
+                                if g.q.len() >= 2 {
+                                    l += g.q.pop_front().unwrap_or(0.0);
+                                    r += g.q.pop_front().unwrap_or(0.0);
+                                } else {
+                                    g.primed = false; // ran dry: wait until it refills, no crackle
+                                }
+                            }
+                        }
+                        l *= v;
+                        r *= v;
+                        let (l, r) = if limit {
+                            (lim_l.process(l, SOUND_CEILING), lim_r.process(r, SOUND_CEILING))
+                        } else {
+                            (l.clamp(-1.0, 1.0), r.clamp(-1.0, 1.0))
+                        };
+                        if frame.len() == 1 {
+                            frame[0] = (l + r) * 0.5;
+                        } else {
+                            for (i, s) in frame.iter_mut().enumerate() {
+                                *s = match i {
+                                    0 => l,
+                                    1 => r,
+                                    _ => 0.0,
+                                };
+                            }
+                        }
+                    }
+                },
+                |e| eprintln!("app sound output error: {e}"),
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+        stream.play().map_err(|e| e.to_string())?;
+        let capture = crate::app_capture::Capture::start(rate, all, names, sources, errors);
+        Ok(AppOut { _stream: stream, volume: vol, _capture: capture })
+    }
+
+    fn set_volume(&self, v: f32) {
+        self.volume.store(v.to_bits(), Ordering::Relaxed);
+    }
+}
+
 // ---------- device lookup ----------
 
 fn find_output(host: &cpal::Host, name: &str) -> Option<cpal::Device> {
@@ -922,9 +1041,9 @@ pub fn list_devices() -> Devices {
 
 // ---------- virtual cable (Go Live) ----------
 
-/// Headroom for sounds while live: Windows adds sounds and mic on the cable, and a sum
-/// above 1.0 would clip (crackle). -3 dB is enough for normal speech.
-const LIVE_SOUND_HEADROOM: f32 = 0.7;
+// Sound level on the cable while live is now the "Sound level on the cable" slider
+// (Settings > Live mix, default 70% = about -3 dB). Windows adds sounds and mic on the
+// cable, and a sum above 1.0 would clip (crackle), so 100% needs a quiet voice.
 
 /// Pick the playback device that feeds Discord. `wanted` is the user's choice: a device
 /// name, or `AUTO_CABLE` to look for VB-CABLE (then other virtual cables).
@@ -996,6 +1115,13 @@ struct Engine {
     mic: Option<Mic>,
     /// the AI Voice plan the mic was opened with
     ai_applied: Option<crate::voice_ai::Plan>,
+    /// app sound into the cable (only while Go Live is on)
+    app: Option<AppOut>,
+    /// what `app` was started with: (cable, all apps, picked names)
+    app_key: Option<(String, bool, Vec<String>)>,
+    /// problems found by the app capture threads
+    app_err_tx: Sender<String>,
+    app_err_rx: mpsc::Receiver<String>,
     levels: Arc<Levels>,
     on_error: Box<dyn Fn(String) + Send>,
 }
@@ -1004,6 +1130,7 @@ impl Engine {
     fn configure(&mut self, s: AudioSettings) {
         self.levels.duck_on.store(s.duck_on, Ordering::Relaxed);
         self.levels.limiter_on.store(s.limiter_on, Ordering::Relaxed);
+        self.levels.mic_ceiling.store(s.live_mic_ceiling.clamp(0.3, 1.0).to_bits(), Ordering::Relaxed);
         self.settings = Some(s);
         self.apply();
     }
@@ -1058,7 +1185,39 @@ impl Engine {
         }
 
         self.ai_applied = s.ai.clone();
+        self.apply_app(&s);
         self.applied = Some(route);
+    }
+
+    /// App sound runs only while Go Live is on and the switch is on. It restarts only when the
+    /// cable or the choice of apps changes; the level changes at once.
+    fn apply_app(&mut self, s: &AudioSettings) {
+        let want = match (&self.live, s.app_on) {
+            (Some(cable), true) => Some((cable.clone(), s.app_all, s.app_names.clone())),
+            _ => None,
+        };
+        if want == self.app_key {
+            if let Some(a) = self.app.as_ref() {
+                a.set_volume(s.app_volume);
+            }
+            return;
+        }
+        self.app = None; // stop the old capture first
+        self.app_key = want.clone();
+        if let Some((cable, all, names)) = want {
+            if all || !names.is_empty() {
+                match AppOut::start(&cable, all, names, s.app_volume, Arc::clone(&self.levels), self.app_err_tx.clone()) {
+                    Ok(a) => self.app = Some(a),
+                    Err(e) => (self.on_error)(e),
+                }
+            }
+        }
+    }
+
+    fn drain_app_errors(&mut self) {
+        while let Ok(e) = self.app_err_rx.try_recv() {
+            (self.on_error)(e);
+        }
     }
 
     fn update_gains(&mut self) {
@@ -1066,7 +1225,7 @@ impl Engine {
             Some(s) => s,
             None => return,
         };
-        let headroom = if self.live.is_some() { LIVE_SOUND_HEADROOM } else { 1.0 };
+        let headroom = if self.live.is_some() { s.live_sound_level.clamp(0.3, 1.0) } else { 1.0 };
         if let Some(o) = self.primary.as_mut() {
             o.set_gain(s.volume * s.primary_volume);
         }
@@ -1181,6 +1340,7 @@ impl Engine {
 /// Start the audio thread. Returns the command sender. `levels` is where the mic meters are written.
 pub fn spawn(levels: Arc<Levels>, on_error: impl Fn(String) + Send + 'static) -> Sender<AudioCmd> {
     let (tx, rx) = mpsc::channel::<AudioCmd>();
+    let (app_err_tx, app_err_rx) = mpsc::channel::<String>();
     thread::spawn(move || {
         let mut engine = Engine {
             settings: None,
@@ -1190,10 +1350,22 @@ pub fn spawn(levels: Arc<Levels>, on_error: impl Fn(String) + Send + 'static) ->
             secondary: None,
             mic: None,
             ai_applied: None,
+            app: None,
+            app_key: None,
+            app_err_tx,
+            app_err_rx,
             levels,
             on_error: Box::new(on_error),
         };
-        for cmd in rx {
+        loop {
+            let cmd = match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                Ok(c) => c,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    engine.drain_app_errors();
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            };
             match cmd {
                 AudioCmd::Configure(s) => engine.configure(s),
                 AudioCmd::Play { file, volume, looped, fx } => engine.play(&file, volume, looped, fx),
@@ -1207,6 +1379,7 @@ pub fn spawn(levels: Arc<Levels>, on_error: impl Fn(String) + Send + 'static) ->
                     let _ = reply.send(engine.set_live(on));
                 }
             }
+            engine.drain_app_errors();
         }
     });
     tx
@@ -1262,7 +1435,9 @@ mod tests {
             live_output: AUTO_CABLE.into(),
             gate_on: false, gate_threshold: 0.003,
             fx: 0,
-            duck_on: false, limiter_on: true, ai: None,
+            duck_on: false, limiter_on: true,
+            live_sound_level: 0.7, live_mic_ceiling: 0.5,
+            app_on: false, app_all: false, app_names: Vec::new(), app_volume: 0.7, ai: None,
         }
     }
 

@@ -191,6 +191,15 @@ def make_noop(label):
     return run
 
 
+def list_apps(_args):
+    return [
+        {"name": "chrome", "title": "Mock Browser", "window": True},
+        {"name": "spotify", "title": "Mock Music", "window": True},
+        {"name": "game", "title": "Mock Game", "window": True},
+        {"name": "updater", "title": "", "window": False},
+    ]
+
+
 def list_devices(_args):
     return {
         "outputs": ["Disabled", "Default Output Device", "Speakers (Mock)", "CABLE Input (Mock)"],
@@ -381,6 +390,7 @@ COMMANDS = {
     "audio_resume": make_noop("resume"),
     "audio_stop": make_noop("stop"),
     "list_devices": list_devices,
+    "list_apps": list_apps,
     "set_live": set_live,
     "app_version": lambda _a: "0.0.0-mock",
     "open_url": make_noop("open_url"),

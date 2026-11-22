@@ -988,10 +988,10 @@ function buildSettings() {
     return s;
   };
 
-  const range = (key) => {
+  const range = (key, min = 0) => {
     const label = h('span', { class: 'muted' }, `${cfg[key]}%`);
     const r = h('input', {
-      type: 'range', min: 0, max: 100, value: cfg[key],
+      type: 'range', min, max: 100, value: cfg[key],
       oninput: () => {
         cfg[key] = Number(r.value);
         label.textContent = `${r.value}%`;
@@ -1098,7 +1098,87 @@ function buildSettings() {
     });
     return section('Live mix',
       row('Ducking', 'Sounds get quieter while you speak, so your friends hear you. Works on the output that carries your mic (Go Live). Needs the mic on.', duckSwitch),
-      row('Limiter', 'Stops loud peaks from crackling in Discord. Applies to sounds and to your mic.', limiterSwitch));
+      row('Limiter', 'Stops loud peaks from crackling in Discord. Applies to sounds and to your mic.', limiterSwitch),
+      row('Sound level on the cable', 'How loud your sounds are in Discord while you Go Live. Default 70%. At 100% a loud sound plus a loud voice can crackle.', range('live_sound_level', 30)),
+      row('Mic max level (limiter)', 'The loudest your voice may get in Discord. Default 50%. Raise it if your mic is too quiet. Needs the limiter on.', range('live_mic_ceiling', 30)));
+  };
+
+  // App sound: the sound of other apps (game, browser, music) also goes into the cable while
+  // Go Live is on. Pick the apps, or send all of them. Discord and Rustboard are never sent.
+  const appSoundSection = () => {
+    const onSwitch = h('input', {
+      type: 'checkbox', checked: cfg.app_audio_on,
+      onchange: (e) => { cfg.app_audio_on = e.target.checked; commit(); paintPicker(); },
+    });
+    const modeSel = h('select', {
+      onchange: (e) => { cfg.app_audio_all = e.target.value === 'all'; commit(); paintPicker(); },
+    },
+    h('option', { value: 'pick' }, 'Only the apps I pick'),
+    h('option', { value: 'all' }, 'All apps (not Discord, not Rustboard)'));
+    modeSel.value = cfg.app_audio_all ? 'all' : 'pick';
+
+    const picker = h('div', { class: 'set-row col' });
+    let apps = null; // null = not loaded yet
+    let showBackground = false;
+
+    const toggleApp = (name, on) => {
+      const set = new Set(cfg.app_audio_apps);
+      if (on) set.add(name); else set.delete(name);
+      cfg.app_audio_apps = [...set].sort();
+      commit();
+    };
+
+    const load = async () => {
+      try {
+        apps = await call('list_apps');
+      } catch (e) {
+        apps = [];
+        toast(`Cannot list apps: ${e}`, true);
+      }
+      paintPicker();
+    };
+
+    function paintPicker() {
+      const hide = !cfg.app_audio_on || cfg.app_audio_all;
+      picker.style.display = hide ? 'none' : '';
+      if (hide) return;
+      if (apps === null) {
+        picker.replaceChildren(h('div', { class: 'hint' }, 'Loading apps...'));
+        load();
+        return;
+      }
+      const byName = new Map(apps.map((a) => [a.name, a]));
+      for (const n of cfg.app_audio_apps) {
+        if (!byName.has(n)) byName.set(n, { name: n, title: '', window: false, gone: true });
+      }
+      const shown = [...byName.values()].filter((a) => showBackground || a.window || cfg.app_audio_apps.includes(a.name));
+      const items = shown.map((a) => h('label', { class: 'app-item' },
+        h('input', {
+          type: 'checkbox', checked: cfg.app_audio_apps.includes(a.name),
+          onchange: (e) => toggleApp(a.name, e.target.checked),
+        }),
+        h('span', { class: 't' }, a.name),
+        a.gone ? h('span', { class: 'hint' }, '(not running now)') : (a.title ? h('span', { class: 'hint' }, a.title.slice(0, 60)) : null)));
+      picker.replaceChildren(
+        h('div', { class: 'app-tools' },
+          h('button', { onclick: () => { apps = null; paintPicker(); } }, 'Refresh'),
+          h('label', { class: 'app-item' },
+            h('input', {
+              type: 'checkbox', checked: showBackground,
+              onchange: (e) => { showBackground = e.target.checked; paintPicker(); },
+            }),
+            h('span', {}, 'Show background apps'))),
+        items.length
+          ? h('div', { class: 'app-list' }, items)
+          : h('div', { class: 'hint' }, 'No apps with a window found. Open the app first, then press Refresh.'));
+    }
+    paintPicker();
+
+    return section('App sound',
+      row('Send app sound to Discord', 'While Go Live is on, the sound of other apps (game, browser, music) also goes into the cable. You still hear them on your own speakers. Needs Windows 11 or a recent Windows 10. Discord is never sent, so your friends do not hear an echo.', onSwitch),
+      row('Which apps', null, modeSel),
+      picker,
+      row('App sound level', 'How loud the apps are in Discord. Lower it if your voice is hard to hear.', range('app_audio_volume')));
   };
 
   // Phone remote: the Rustboard Remote Android app talks to this PC over Wi-Fi. Off by default.
@@ -1190,6 +1270,8 @@ function buildSettings() {
     micGateSection(),
 
     liveMixSection(),
+
+    appSoundSection(),
 
     remoteSection(),
 
